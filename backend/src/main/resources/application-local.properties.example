@@ -1,0 +1,22 @@
+# Local Development Configuration
+# Copy this file to application-local.properties and update with your credentials
+
+# MongoDB (Production ZLCM Database)
+spring.data.mongodb.uri=mongodb+srv://otp-reporting-prod:YpdwwzafSgNYkNTo@otp-prod-pl-0.0k1fz.mongodb.net/?retryWrites=true&w=majority
+spring.data.mongodb.database=zlcm
+
+# Data Entry API (Camunda BPM)
+api.dataentry.url=https://bpm.se2.com/engine-rest
+api.dataentry.key=your_actual_api_key
+
+# Case Details API
+api.casedetails.url=https://your-case-details-api.com
+api.casedetails.key=your_actual_api_key
+
+# OnBase API (OnBase Integration Manager)
+api.onbase.url=https://onbaseintegrationmanager.se2.com/api/OnBase
+api.onbase.authorization=Basic dGhha3VyMzpXZWxjb21lQDEyMzQ=
+
+# Business Rules
+business.days-threshold=2
+

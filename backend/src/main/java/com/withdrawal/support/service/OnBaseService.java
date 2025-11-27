@@ -1,0 +1,153 @@
+package com.withdrawal.support.service;
+
+import com.withdrawal.support.config.ApiConfig;
+import com.withdrawal.support.dto.OnBaseCaseDetails;
+import com.withdrawal.support.model.CaseCategory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class OnBaseService {
+
+    private final ApiConfig apiConfig;
+    private final WebClient.Builder webClientBuilder;
+
+    /**
+     * Fetches case details from OnBase Integration Manager
+     * Endpoint: /GetCaseDetails?request.lob={clientCode}&request.caseId={caseId}
+     */
+    public OnBaseCaseDetails getOnBaseCaseDetails(String clientCode, String onbaseCaseId) {
+        log.info("Fetching OnBase case details for clientCode: {}, caseId: {}", clientCode, onbaseCaseId);
+        
+        try {
+            WebClient webClient = webClientBuilder
+                    .baseUrl(apiConfig.getOnbase().getUrl())
+                    .defaultHeader("Content-Type", "application/json")
+                    .defaultHeader("Authorization", apiConfig.getOnbase().getAuthorization())
+                    .build();
+
+            OnBaseCaseDetails details = webClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/GetCaseDetails")
+                            .queryParam("request.lob", clientCode)
+                            .queryParam("request.caseId", onbaseCaseId)
+                            .build())
+                    .retrieve()
+                    .bodyToMono(OnBaseCaseDetails.class)
+                    .block();
+
+            if (details != null) {
+                log.info("Retrieved OnBase details - Status: {}, TaskCount: {}, DocumentNumber: {}", 
+                        details.getStatus(), details.getTaskCount(), details.getDocumentNumber());
+            }
+            
+            return details;
+            
+        } catch (Exception e) {
+            log.error("Failed to fetch OnBase case details for clientCode: {}, caseId: {}", 
+                    clientCode, onbaseCaseId, e);
+            throw new RuntimeException("Failed to fetch OnBase case details: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Categorizes a case based on its status and BPM Follow-Up task completion
+     * 
+     * Categories:
+     * - FOLLOW_UP_COMPLETE: All BPM Follow-Up tasks are complete (will cancel)
+     * - DV_POST_OPEN_DV_COMPLETE: Status "Post Complete" but BPM Follow-Up not complete (will cancel)
+     * - CHECK_MONGODB: Status Pend/Pending/New with BPM Follow-Up not complete
+     */
+    public CaseCategory categorizeCaseByStatus(OnBaseCaseDetails caseDetails) {
+        if (caseDetails == null || caseDetails.getTasks() == null) {
+            log.warn("Case details or tasks are null, returning UNKNOWN category");
+            return CaseCategory.UNKNOWN;
+        }
+        
+        String status = caseDetails.getStatus();
+        boolean allBpmFollowUpComplete = areAllBpmFollowUpTasksComplete(caseDetails.getTasks());
+        boolean anyBpmFollowUpNotComplete = !allBpmFollowUpComplete;
+        
+        log.info("Case categorization - Status: {}, All BPM Follow-Up Complete: {}", 
+                status, allBpmFollowUpComplete);
+        
+        // Category 1: All BPM Follow-Up tasks are complete
+        if (allBpmFollowUpComplete) {
+            log.info("Category: FOLLOW_UP_COMPLETE - All BPM Follow-Up tasks complete");
+            return CaseCategory.FOLLOW_UP_COMPLETE;
+        }
+        
+        // Category 2: Status "Post Complete" but BPM Follow-Up not complete
+        if ("Post Complete".equalsIgnoreCase(status) && anyBpmFollowUpNotComplete) {
+            log.info("Category: DV_POST_OPEN_DV_COMPLETE - Status 'Post Complete' but BPM Follow-Up not complete");
+            return CaseCategory.DV_POST_OPEN_DV_COMPLETE;
+        }
+        
+        // Category 3: Status Pend/Pending/New with BPM Follow-Up not complete
+        if (isStatusPendingOrNew(status) && anyBpmFollowUpNotComplete) {
+            log.info("Category: CHECK_MONGODB - Status '{}' with BPM Follow-Up not complete", status);
+            return CaseCategory.CHECK_MONGODB;
+        }
+        
+        log.info("Category: UNKNOWN - No specific category matched");
+        return CaseCategory.UNKNOWN;
+    }
+    
+    /**
+     * Checks if all BPM Follow-Up tasks are complete
+     */
+    private boolean areAllBpmFollowUpTasksComplete(List<OnBaseCaseDetails.Task> tasks) {
+        if (tasks == null || tasks.isEmpty()) {
+            log.debug("No tasks found");
+            return false;
+        }
+        
+        List<OnBaseCaseDetails.Task> bpmFollowUpTasks = tasks.stream()
+                .filter(task -> "BPM Follow-Up".equalsIgnoreCase(task.getTaskType()))
+                .toList();
+        
+        if (bpmFollowUpTasks.isEmpty()) {
+            log.debug("No BPM Follow-Up tasks found");
+            return false;
+        }
+        
+        boolean allComplete = bpmFollowUpTasks.stream()
+                .allMatch(task -> "Complete".equalsIgnoreCase(task.getStatus()));
+        
+        log.debug("Found {} BPM Follow-Up tasks, all complete: {}", bpmFollowUpTasks.size(), allComplete);
+        
+        return allComplete;
+    }
+    
+    /**
+     * Checks if status is Pend, Pending, or New
+     */
+    private boolean isStatusPendingOrNew(String status) {
+        if (status == null) {
+            return false;
+        }
+        
+        return status.equalsIgnoreCase("Pend") ||
+               status.equalsIgnoreCase("Pending") ||
+               status.equalsIgnoreCase("New");
+    }
+
+    /**
+     * Gets a human-readable description of the case category
+     */
+    public String getCategoryDescription(CaseCategory category) {
+        return switch (category) {
+            case FOLLOW_UP_COMPLETE -> "All BPM Follow-Up tasks complete - Will cancel";
+            case DV_POST_OPEN_DV_COMPLETE -> "Status 'Post Complete' with incomplete BPM Follow-Up - Will cancel";
+            case CHECK_MONGODB -> "Status Pend/Pending/New with incomplete BPM Follow-Up - Check MongoDB";
+            case UNKNOWN -> "Unknown category - Requires manual review";
+        };
+    }
+}
+

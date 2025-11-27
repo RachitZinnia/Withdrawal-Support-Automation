@@ -1,0 +1,290 @@
+package com.withdrawal.support.service;
+
+import com.withdrawal.support.config.BusinessConfig;
+import com.withdrawal.support.dto.*;
+import com.withdrawal.support.model.CaseCategory;
+import com.withdrawal.support.model.CaseStatus;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class DailyReportProcessingService {
+
+    private final CsvProcessingService csvProcessingService;
+    private final DataEntryService dataEntryService;
+    private final OnBaseService onBaseService;
+    private final CaseMongoService caseMongoService;
+    private final BusinessConfig businessConfig;
+
+    /**
+     * Main method to process daily report CSV file
+     */
+    public DailyReportProcessingResult processDailyReport(MultipartFile csvFile) {
+        log.info("Starting daily report processing for file: {}", csvFile.getOriginalFilename());
+        
+        DailyReportProcessingResult result = DailyReportProcessingResult.builder()
+                .details(new ArrayList<>())
+                .businessKeysExtracted(new ArrayList<>())
+                .documentNumbersToCancel(new ArrayList<>())
+                .documentNumbersToReturning(new ArrayList<>())
+                .documentNumbersToComplete(new ArrayList<>())
+                .documentNumbersForManualReview(new ArrayList<>())
+                .build();
+
+        try {
+            // Step 1: Parse CSV file
+            List<DailyReportRow> allRows = csvProcessingService.parseCsvFile(csvFile);
+            result.setTotalRowsInCsv(allRows.size());
+            log.info("Parsed {} total rows from CSV", allRows.size());
+
+            // Step 2: Filter for "Not Matching" rows
+            List<DailyReportRow> notMatchingRows = csvProcessingService.filterNotMatchingRows(allRows);
+            result.setNotMatchingRows(notMatchingRows.size());
+            log.info("Found {} 'Not Matching' rows", notMatchingRows.size());
+
+            // Step 3: Extract business keys
+            List<String> businessKeys = csvProcessingService.extractBusinessKeys(notMatchingRows);
+            result.setBusinessKeysExtracted(businessKeys);
+            log.info("Extracted {} unique business keys", businessKeys.size());
+
+            // Step 4: Process each business key
+            for (String businessKey : businessKeys) {
+                try {
+                    List<CaseProcessingDetail> caseDetails = processBusinessKey(businessKey, result);
+                    result.getDetails().addAll(caseDetails);
+                    result.setProcessedCases(result.getProcessedCases() + caseDetails.size());
+                    
+                    // Update counters
+                    for (CaseProcessingDetail detail : caseDetails) {
+                        if (detail.isRequiresManualReview()) {
+                            result.setManualReviewRequired(result.getManualReviewRequired() + 1);
+                        } else if (detail.getStatus() == CaseStatus.COMPLETED) {
+                            result.setSuccessfulCases(result.getSuccessfulCases() + 1);
+                        } else if (detail.getStatus() == CaseStatus.FAILED) {
+                            result.setFailedCases(result.getFailedCases() + 1);
+                        }
+                    }
+                    
+                } catch (Exception e) {
+                    log.error("Error processing business key: {}", businessKey, e);
+                    result.setFailedCases(result.getFailedCases() + 1);
+                }
+            }
+
+            result.setMessage(String.format(
+                    "Daily Report Processing: %d total rows, %d not matching, %d business keys, %d cases processed. " +
+                    "To cancel: %d, To returning: %d, To complete: %d, Manual review: %d",
+                    result.getTotalRowsInCsv(),
+                    result.getNotMatchingRows(),
+                    result.getBusinessKeysExtracted().size(),
+                    result.getProcessedCases(),
+                    result.getDocumentNumbersToCancel().size(),
+                    result.getDocumentNumbersToReturning().size(),
+                    result.getDocumentNumbersToComplete().size(),
+                    result.getDocumentNumbersForManualReview().size()
+            ));
+            
+            log.info("Daily report processing completed: {}", result.getMessage());
+            
+        } catch (Exception e) {
+            log.error("Error during daily report processing", e);
+            result.setMessage("Processing failed: " + e.getMessage());
+        }
+
+        return result;
+    }
+
+    /**
+     * Processes a single business key:
+     * 1. Get process instance IDs from business key
+     * 2. For each process instance, get clientCode and onbaseCaseId
+     * 3. Call OnBase API
+     * 4. Process similar to data entry waiting cases
+     */
+    private List<CaseProcessingDetail> processBusinessKey(String businessKey, DailyReportProcessingResult result) {
+        log.info("Processing business key: {}", businessKey);
+        
+        List<CaseProcessingDetail> caseDetails = new ArrayList<>();
+        
+        try {
+            // Step 1: Get process instance IDs for this business key
+            List<String> processInstanceIds = getProcessInstanceIdsFromBusinessKey(businessKey);
+            log.info("Found {} process instances for business key: {}", processInstanceIds.size(), businessKey);
+            
+            // Step 2: Process each process instance
+            for (String processInstanceId : processInstanceIds) {
+                try {
+                    CaseProcessingDetail detail = processProcessInstanceFromBusinessKey(processInstanceId, result);
+                    caseDetails.add(detail);
+                } catch (Exception e) {
+                    log.error("Error processing process instance {}: {}", processInstanceId, e.getMessage());
+                    caseDetails.add(CaseProcessingDetail.builder()
+                            .caseReference(processInstanceId)
+                            .status(CaseStatus.FAILED)
+                            .message("Error: " + e.getMessage())
+                            .processedAt(LocalDateTime.now())
+                            .build());
+                }
+            }
+            
+        } catch (Exception e) {
+            log.error("Error processing business key {}: {}", businessKey, e.getMessage());
+        }
+        
+        return caseDetails;
+    }
+
+    /**
+     * Gets process instance IDs from a business key
+     * Calls Camunda API: /process-instance?businessKey={businessKey}
+     */
+    private List<String> getProcessInstanceIdsFromBusinessKey(String businessKey) {
+        log.info("Fetching process instance IDs for business key: {}", businessKey);
+        return dataEntryService.getProcessInstanceIdsByBusinessKey(businessKey);
+    }
+
+    /**
+     * Processes a single process instance from business key
+     * Similar logic to data entry waiting cases
+     */
+    private CaseProcessingDetail processProcessInstanceFromBusinessKey(String processInstanceId, 
+                                                                       DailyReportProcessingResult result) {
+        log.info("Processing process instance from business key: {}", processInstanceId);
+        
+        CaseProcessingDetail detail = CaseProcessingDetail.builder()
+                .caseReference(processInstanceId)
+                .processedAt(LocalDateTime.now())
+                .build();
+
+        try {
+            // Step 1: Get case details from Camunda (clientCode and onbaseCaseId)
+            CaseDetails caseDetails = dataEntryService.getCaseDetails(processInstanceId);
+            detail.setCaseId(caseDetails.getCaseId());
+            detail.setClientCode(caseDetails.getClientCode());
+
+            // Step 2: Get case information from OnBase
+            OnBaseCaseDetails onBaseDetails = onBaseService.getOnBaseCaseDetails(
+                    caseDetails.getClientCode(), 
+                    caseDetails.getCaseId()
+            );
+
+            detail.setOnbaseStatus(onBaseDetails.getStatus());
+            String documentNumber = onBaseDetails.getDocumentNumber();
+
+            // Step 3: Categorize case based on status and BPM Follow-Up tasks
+            CaseCategory category = onBaseService.categorizeCaseByStatus(onBaseDetails);
+            detail.setCategory(category);
+            
+            String categoryDescription = onBaseService.getCategoryDescription(category);
+            detail.setAction(category.name());
+
+            // Step 4: Process based on category (similar to data entry waiting cases)
+            processCaseByCategory(category, categoryDescription, caseDetails, onBaseDetails, 
+                                 documentNumber, detail, result);
+
+        } catch (Exception e) {
+            log.error("Error processing process instance: {}", processInstanceId, e);
+            detail.setStatus(CaseStatus.FAILED);
+            detail.setMessage("Error: " + e.getMessage());
+        }
+
+        return detail;
+    }
+
+    /**
+     * Processes case based on category (extracted to avoid code duplication)
+     */
+    private void processCaseByCategory(CaseCategory category, String categoryDescription,
+                                      CaseDetails caseDetails, OnBaseCaseDetails onBaseDetails,
+                                      String documentNumber, CaseProcessingDetail detail,
+                                      DailyReportProcessingResult result) {
+        
+        switch (category) {
+            case FOLLOW_UP_COMPLETE -> {
+                log.info("Case {} - All BPM Follow-Up complete, marking for cancellation", caseDetails.getCaseId());
+                detail.setStatus(CaseStatus.COMPLETED);
+                detail.setMessage(categoryDescription + " - Will cancel");
+                
+                if (documentNumber != null && !result.getDocumentNumbersToCancel().contains(documentNumber)) {
+                    result.getDocumentNumbersToCancel().add(documentNumber);
+                    log.info("Added document {} to cancellation list", documentNumber);
+                }
+            }
+            
+            case DV_POST_OPEN_DV_COMPLETE -> {
+                log.info("Case {} - Post Complete with incomplete BPM Follow-Up", caseDetails.getCaseId());
+                detail.setStatus(CaseStatus.COMPLETED);
+                detail.setMessage(categoryDescription + " - Will cancel");
+                
+                if (documentNumber != null && !result.getDocumentNumbersToCancel().contains(documentNumber)) {
+                    result.getDocumentNumbersToCancel().add(documentNumber);
+                }
+                if (documentNumber != null && !result.getDocumentNumbersToComplete().contains(documentNumber)) {
+                    result.getDocumentNumbersToComplete().add(documentNumber);
+                }
+            }
+            
+            case CHECK_MONGODB -> {
+                log.info("Case {} - Checking MongoDB for document: {}", caseDetails.getCaseId(), documentNumber);
+                
+                CaseMongoService.CaseAnalysisResult mongoAnalysis = caseMongoService.analyzeCaseFromMongo(
+                        documentNumber, 
+                        businessConfig.getDaysThreshold()
+                );
+                
+                if (!mongoAnalysis.isInProgress()) {
+                    log.info("Document {} - NOT IN_PROGRESS, marking for cancellation", documentNumber);
+                    detail.setStatus(CaseStatus.COMPLETED);
+                    detail.setMessage(categoryDescription + " - MongoDB caseStatus: " + 
+                            mongoAnalysis.getCaseStatus() + " - Will cancel");
+                    
+                    if (documentNumber != null && !result.getDocumentNumbersToCancel().contains(documentNumber)) {
+                        result.getDocumentNumbersToCancel().add(documentNumber);
+                    }
+                    if (documentNumber != null && !result.getDocumentNumbersToReturning().contains(documentNumber)) {
+                        result.getDocumentNumbersToReturning().add(documentNumber);
+                    }
+                    
+                } else {
+                    log.info("Document {} is IN_PROGRESS", documentNumber);
+                    
+                    if (mongoAnalysis.isStale()) {
+                        log.warn("Document {} is stale, flagging for manual review", documentNumber);
+                        detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
+                        detail.setMessage(categoryDescription + " - IN_PROGRESS but stale - Manual review");
+                        detail.setRequiresManualReview(true);
+                        detail.setReviewReason("IN_PROGRESS for more than " + businessConfig.getDaysThreshold() + " business days");
+                        
+                        if (documentNumber != null && !result.getDocumentNumbersForManualReview().contains(documentNumber)) {
+                            result.getDocumentNumbersForManualReview().add(documentNumber);
+                        }
+                    } else {
+                        detail.setStatus(CaseStatus.IN_PROGRESS);
+                        detail.setMessage(categoryDescription + " - IN_PROGRESS, continue monitoring");
+                    }
+                }
+            }
+            
+            default -> {
+                log.warn("Case {} - Unknown category", caseDetails.getCaseId());
+                detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
+                detail.setMessage(categoryDescription);
+                detail.setRequiresManualReview(true);
+                detail.setReviewReason("Unknown category");
+                
+                if (documentNumber != null && !result.getDocumentNumbersForManualReview().contains(documentNumber)) {
+                    result.getDocumentNumbersForManualReview().add(documentNumber);
+                }
+            }
+        }
+    }
+}
+
