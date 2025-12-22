@@ -4,6 +4,10 @@ import com.withdrawal.support.config.ApiConfig;
 import com.withdrawal.support.dto.CamundaVariable;
 import com.withdrawal.support.dto.CaseDetails;
 import com.withdrawal.support.dto.DataEntryCase;
+import com.withdrawal.support.dto.ProcessDetail;
+import com.withdrawal.support.model.ProcessResult;
+import lombok.AllArgsConstructor;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
@@ -11,14 +15,28 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class DataEntryService {
+    
+    /**
+     * Result object containing process instance IDs and their state information
+     */
+    @Data
+    @AllArgsConstructor
+    public static class ProcessInstanceResult {
+        private List<String> processInstanceIds;
+        private boolean hasActiveInstances;
+    }
 
     private final ApiConfig apiConfig;
     private final WebClient.Builder webClientBuilder;
@@ -29,7 +47,7 @@ public class DataEntryService {
      */
     public List<DataEntryCase> getDataEntryWaitingCases() {
         log.info("Fetching data entry waiting cases from Camunda BPM");
-        
+
         try {
             WebClient webClient = webClientBuilder
                     .baseUrl(apiConfig.getDataentry().getUrl())
@@ -52,7 +70,39 @@ public class DataEntryService {
 
             log.info("Retrieved {} waiting cases from Camunda", cases != null ? cases.size() : 0);
             return cases != null ? cases : List.of();
-            
+
+        } catch (Exception e) {
+            log.error("Failed to fetch data entry waiting cases from Camunda", e);
+            throw new RuntimeException("Failed to fetch data entry waiting cases: " + e.getMessage());
+        }
+    }
+
+    public List<DataEntryCase> getyWaitingCases(String processDefinitionKey, String activityId) {
+        log.info("Fetching waiting cases from Camunda BPM");
+
+        try {
+            WebClient webClient = webClientBuilder
+                    .baseUrl(apiConfig.getDataentry().getUrl())
+                    .build();
+
+            List<DataEntryCase> cases = webClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/execution")
+                            .queryParam("processDefinitionKey", processDefinitionKey)
+                            .queryParam("activityId", activityId)
+                            .queryParam("active", "true")
+                            .build())
+                    .retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<List<DataEntryCase>>() {})
+                    .onErrorResume(e -> {
+                        log.error("Error fetching waiting cases from Camunda", e);
+                        return Mono.just(List.of());
+                    })
+                    .block();
+
+            log.info("Retrieved {} waiting cases from Camunda", cases != null ? cases.size() : 0);
+            return cases != null ? cases : List.of();
+
         } catch (Exception e) {
             log.error("Failed to fetch data entry waiting cases from Camunda", e);
             throw new RuntimeException("Failed to fetch data entry waiting cases: " + e.getMessage());
@@ -65,21 +115,21 @@ public class DataEntryService {
      */
     public CaseDetails getCaseDetails(String processInstanceId) {
         log.info("Fetching case details for process instance: {}", processInstanceId);
-        
+
         try {
             // Get clientCode variable
             String clientCode = getCamundaVariable(processInstanceId, "clientCode");
             log.info("Retrieved clientCode: {}", clientCode);
-            
+
             // Get onbaseCaseId variable
             String onbaseCaseId = getCamundaVariable(processInstanceId, "onbaseCaseId");
             log.info("Retrieved onbaseCaseId: {}", onbaseCaseId);
-            
+
             // Build client variables map
             Map<String, Object> clientVariables = new HashMap<>();
             clientVariables.put("clientCode", clientCode);
             clientVariables.put("processInstanceId", processInstanceId);
-            
+
             // Build and return case details
             CaseDetails details = CaseDetails.builder()
                     .caseId(onbaseCaseId)
@@ -87,64 +137,72 @@ public class DataEntryService {
                     .clientCode(clientCode)
                     .clientVariables(clientVariables)
                     .build();
-            
-            log.info("Successfully retrieved case details - OnBase Case ID: {}, Client Code: {}", 
+
+            log.info("Successfully retrieved case details - OnBase Case ID: {}, Client Code: {}",
                     onbaseCaseId, clientCode);
             return details;
-            
+
         } catch (Exception e) {
             log.error("Failed to fetch case details for process instance: {}", processInstanceId, e);
             throw new RuntimeException("Failed to fetch case details: " + e.getMessage());
         }
     }
-    
+
     /**
-     * Gets a specific variable from a Camunda process instance
-     * Endpoint: /process-instance/{process_instance_id}/variables/{variable_name}
+     * Gets a specific variable from a Camunda process instance using history API
+     * Endpoint: /history/variable-instance?processInstanceId={processInstanceId}&variableName={variableName}
      */
-    private String getCamundaVariable(String processInstanceId, String variableName) {
+    public String getCamundaVariable(String processInstanceId, String variableName) {
         log.debug("Fetching Camunda variable '{}' for process instance: {}", variableName, processInstanceId);
-        
+
         try {
             WebClient webClient = webClientBuilder
                     .baseUrl(apiConfig.getDataentry().getUrl())
                     .build();
 
-            CamundaVariable variable = webClient.get()
-                    .uri("/process-instance/{processInstanceId}/variables/{variableName}", 
-                            processInstanceId, variableName)
+            List<CamundaVariable> variables = webClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/history/variable-instance")
+                            .queryParam("processInstanceId", processInstanceId)
+                            .queryParam("variableName", variableName)
+                            .build())
                     .retrieve()
-                    .bodyToMono(CamundaVariable.class)
+                    .bodyToMono(new ParameterizedTypeReference<List<CamundaVariable>>() {})
                     .onErrorResume(e -> {
-                        log.warn("Error fetching variable '{}' for process instance {}: {}", 
+                        log.warn("Error fetching variable '{}' for process instance {}: {}",
                                 variableName, processInstanceId, e.getMessage());
-                        return Mono.empty();
+                        return Mono.just(List.of());
                     })
                     .block();
 
-            if (variable != null && variable.getValue() != null) {
-                log.debug("Variable '{}' value: {}", variableName, variable.getValue());
-                return variable.getValue();
+            if (variables != null && !variables.isEmpty() && variables.get(0).getValue() != null) {
+                String value = variables.get(0).getValue();
+                log.debug("Variable '{}' value: {}", variableName, value);
+                return value;
             } else {
-                log.warn("Variable '{}' not found or has no value for process instance: {}", 
+                log.warn("Variable '{}' not found or has no value for process instance: {}",
                         variableName, processInstanceId);
                 return null;
             }
-            
+
         } catch (Exception e) {
-            log.error("Failed to fetch Camunda variable '{}' for process instance: {}", 
+            log.error("Failed to fetch Camunda variable '{}' for process instance: {}",
                     variableName, processInstanceId, e);
             return null;
         }
     }
-    
+
     /**
-     * Gets process instance IDs from a business key
-     * Endpoint: /process-instance?businessKey={businessKey}
+     * Gets process instance IDs from a business key with processDefinitionKey filtering
+     * Priority logic:
+     * 1. First, look for processDefinitionKey = "ocr_processing" - if found, return ONLY that process instance ID
+     * 2. If not found, look for processDefinitionKey = "dataentry" - return ALL matching process instance IDs
+     *
+     * Endpoint: /history/process-instance?processInstanceBusinessKey={businessKey}
      */
-    public List<String> getProcessInstanceIdsByBusinessKey(String businessKey) {
+    public ProcessInstanceResult getProcessInstanceIdsByBusinessKey(String businessKey) {
         log.info("Fetching process instance IDs for business key: {}", businessKey);
-        
+
         try {
             WebClient webClient = webClientBuilder
                     .baseUrl(apiConfig.getDataentry().getUrl())
@@ -152,13 +210,13 @@ public class DataEntryService {
 
             List<Map<String, Object>> processInstances = webClient.get()
                     .uri(uriBuilder -> uriBuilder
-                            .path("/process-instance")
-                            .queryParam("businessKey", businessKey)
+                            .path("/history/process-instance")
+                            .queryParam("processInstanceBusinessKey", businessKey)
                             .build())
                     .retrieve()
                     .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
                     .onErrorResume(e -> {
-                        log.error("Error fetching process instances for business key {}: {}", 
+                        log.error("Error fetching process instances for business key {}: {}",
                                 businessKey, e.getMessage());
                         return Mono.just(List.of());
                     })
@@ -166,22 +224,164 @@ public class DataEntryService {
 
             if (processInstances == null || processInstances.isEmpty()) {
                 log.warn("No process instances found for business key: {}", businessKey);
-                return List.of();
+                return new ProcessInstanceResult(List.of(), false);
+            }
+
+            log.info("Found {} total process instances for business key: {}",
+                    processInstances.size(), businessKey);
+            
+            // Check if any instances are ACTIVE
+            boolean hasActiveInstances = processInstances.stream()
+                    .anyMatch(instance -> {
+                        String instanceState = (String) instance.get("state");
+                        boolean isActive = instanceState != null && instanceState.equalsIgnoreCase("ACTIVE");
+                        if (isActive) {
+                            log.debug("Found ACTIVE instance: {}", instance.get("id"));
+                        }
+                        return isActive;
+                    });
+            
+            if (hasActiveInstances) {
+                log.info("Found ACTIVE process instance(s) for business key: {}", businessKey);
             }
             
-            // Extract process instance IDs from response
-            List<String> processInstanceIds = processInstances.stream()
+            // Debug: Log first instance structure to verify field names
+            if (!processInstances.isEmpty()) {
+                log.debug("First instance keys: {}", processInstances.get(0).keySet());
+                log.debug("First instance processDefinitionKey: {}", processInstances.get(0).get("processDefinitionKey"));
+                log.debug("First instance processDefinitionId: {}", processInstances.get(0).get("processDefinitionId"));
+            }
+            
+            // Priority 1: Check for ocr_processing process instances
+            List<String> ocrProcessingIds = processInstances.stream()
+                    .filter(instance -> {
+                        String processDefKey = getProcessDefinitionKey(instance);
+                        boolean isOcrProcessing = "ocr_processing".equals(processDefKey);
+                        if (isOcrProcessing) {
+                            log.debug("Found ocr_processing instance: {}", instance.get("id"));
+                        }
+                        return isOcrProcessing;
+                    })
                     .map(instance -> (String) instance.get("id"))
                     .filter(id -> id != null && !id.isEmpty())
                     .toList();
+
+            if (!ocrProcessingIds.isEmpty()) {
+                log.info("Found {} ocr_processing process instance(s) for business key: {} - Returning ocr_processing ID only",
+                        ocrProcessingIds.size(), businessKey);
+                // Return only the first ocr_processing instance ID
+                return new ProcessInstanceResult(List.of(ocrProcessingIds.get(0)), hasActiveInstances);
+            }
+
+            // Priority 2: If no ocr_processing found, look for dataentry process instances
+            List<String> dataEntryIds = processInstances.stream()
+                    .filter(instance -> {
+                        String processDefKey = getProcessDefinitionKey(instance);
+                        boolean isDataEntry = "dataentry".equals(processDefKey);
+                        if (isDataEntry) {
+                            log.debug("Found dataentry instance: {}", instance.get("id"));
+                        }
+                        return isDataEntry;
+                    })
+                    .map(instance -> (String) instance.get("id"))
+                    .filter(id -> id != null && !id.isEmpty())
+                    .toList();
+
+            if (!dataEntryIds.isEmpty()) {
+                log.info("No ocr_processing found. Found {} dataentry process instance(s) for business key: {} - Returning all dataentry IDs",
+                        dataEntryIds.size(), businessKey);
+                return new ProcessInstanceResult(dataEntryIds, hasActiveInstances);
+            }
+
+            // Priority 3: If neither ocr_processing nor dataentry found, return empty
+            log.warn("No ocr_processing or dataentry process instances found for business key: {}", businessKey);
+            log.debug("Available process definitions: {}",
+                    processInstances.stream()
+                            .map(this::getProcessDefinitionKey)
+                            .distinct()
+                            .toList());
             
-            log.info("Found {} process instances for business key: {}", processInstanceIds.size(), businessKey);
-            return processInstanceIds;
-            
+            return new ProcessInstanceResult(List.of(), hasActiveInstances);
+
         } catch (Exception e) {
             log.error("Failed to fetch process instances for business key: {}", businessKey, e);
-            return List.of();
+            return new ProcessInstanceResult(List.of(), false);
         }
+    }
+    
+    /**
+     * Extracts processDefinitionKey from process instance map
+     * The processDefinitionKey can be in either "processDefinitionKey" field or extracted from "processDefinitionId"
+     */
+    private String getProcessDefinitionKey(Map<String, Object> instance) {
+        // Try direct processDefinitionKey field first
+        Object processDefKey = instance.get("processDefinitionKey");
+        if (processDefKey != null) {
+            String key = processDefKey.toString();
+            log.debug("Found processDefinitionKey directly: {}", key);
+            return key;
+        }
+        
+        // Try to extract from processDefinitionId (format: "processKey:version:deploymentId")
+        Object processDefinitionId = instance.get("processDefinitionId");
+        if (processDefinitionId != null) {
+            String defId = processDefinitionId.toString();
+            log.debug("Extracting from processDefinitionId: {}", defId);
+            int colonIndex = defId.indexOf(':');
+            if (colonIndex > 0) {
+                String extractedKey = defId.substring(0, colonIndex);
+                log.debug("Extracted processDefinitionKey: {}", extractedKey);
+                return extractedKey;
+            }
+            return defId;
+        }
+        
+        // Fallback: try definitionId field as well
+        Object definitionId = instance.get("definitionId");
+        if (definitionId != null) {
+            String defId = definitionId.toString();
+            log.debug("Extracting from definitionId: {}", defId);
+            int colonIndex = defId.indexOf(':');
+            if (colonIndex > 0) {
+                return defId.substring(0, colonIndex);
+            }
+            return defId;
+        }
+        
+        log.warn("Could not find processDefinitionKey in instance. Available keys: {}", instance.keySet());
+        return null;
+    }
+
+    public ProcessResult getStartDateFromProcessInstance(String processInstanceId) {
+        WebClient webClient = webClientBuilder
+                .baseUrl(apiConfig.getDataentry().getUrl())
+                .build();
+
+        List<ProcessDetail> processDetails = webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/history/process-instance")
+                        .queryParam("processInstanceId", processInstanceId)
+                        .build())
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<List<ProcessDetail>>() {})
+                .onErrorResume(e -> {
+                    log.warn("Error for process instance {}: {}", processInstanceId, e.getMessage());
+                    return Mono.just(List.of());
+                })
+                .block();
+        if (Objects.nonNull(processDetails)) {
+            ProcessDetail processDetail = processDetails.get(0);
+            if (Objects.nonNull(processDetail)) {
+                DateTimeFormatter formatter =
+                        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+
+                OffsetDateTime offsetDateTime =
+                        OffsetDateTime.parse(processDetail.getStartTime(), formatter);
+                return new ProcessResult(processDetail.getBusinessKey(), offsetDateTime.toLocalDate());
+            }
+
+        }
+        return new ProcessResult();
     }
 }
 

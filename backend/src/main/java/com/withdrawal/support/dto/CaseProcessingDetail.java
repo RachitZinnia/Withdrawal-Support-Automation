@@ -17,6 +17,7 @@ public class CaseProcessingDetail {
     private String caseReference;
     private String caseId;
     private String clientCode;
+    private String documentNumber;
     private String onbaseStatus;
     private CaseCategory category;
     private CaseStatus status;

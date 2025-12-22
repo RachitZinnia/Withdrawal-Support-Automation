@@ -143,9 +143,10 @@ public class OnBaseService {
      */
     public String getCategoryDescription(CaseCategory category) {
         return switch (category) {
-            case FOLLOW_UP_COMPLETE -> "All BPM Follow-Up tasks complete - Will cancel";
+            case FOLLOW_UP_COMPLETE -> "All BPM Follow-Up tasks complete - Will review manually";
             case DV_POST_OPEN_DV_COMPLETE -> "Status 'Post Complete' with incomplete BPM Follow-Up - Will cancel";
             case CHECK_MONGODB -> "Status Pend/Pending/New with incomplete BPM Follow-Up - Check MongoDB";
+            case WAITING_CASE -> "active process instance present";
             case UNKNOWN -> "Unknown category - Requires manual review";
         };
     }

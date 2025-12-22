@@ -12,12 +12,20 @@ import org.springframework.context.annotation.Configuration;
 public class ApiConfig {
 
     private DataEntryConfig dataentry;
+    private FormServiceConfig formservice;
     private CaseDetailsConfig casedetails;
     private OnBaseConfig onbase;
 
     @Getter
     @Setter
     public static class DataEntryConfig {
+        private String url;
+        private String key;
+    }
+
+    @Getter
+    @Setter
+    public static class FormServiceConfig {
         private String url;
         private String key;
     }

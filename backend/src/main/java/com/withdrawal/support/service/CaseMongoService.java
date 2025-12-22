@@ -8,11 +8,11 @@ import com.withdrawal.support.repository.CaseRepository;
 import com.withdrawal.support.util.BusinessDaysCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -23,7 +23,8 @@ public class CaseMongoService {
     private final CaseInstanceRepository caseInstanceRepository;
 
 
-
+    @Autowired
+    UsBusinessDayService usBusinessDayService;
 
 
     /**
@@ -42,9 +43,9 @@ public class CaseMongoService {
     public CaseAnalysisResult analyzeCaseFromMongo(String documentNumber, int businessDaysThreshold) {
         log.info("Analyzing MongoDB case_instance for document number: {}", documentNumber);
         
-        Optional<CaseInstanceDocument> caseInstance = caseInstanceRepository.findByDocumentNumber(documentNumber);
+        List<CaseInstanceDocument> caseInstances = caseInstanceRepository.findByDocumentNumber(documentNumber);
         
-        if (caseInstance.isEmpty()) {
+        if (caseInstances.isEmpty()) {
             log.info("Case not found in MongoDB for document number: {} - treating as not in progress", documentNumber);
             return CaseAnalysisResult.builder()
                     .found(false)
@@ -52,10 +53,43 @@ public class CaseMongoService {
                     .isInProgress(false)
                     .isStale(false)
                     .lastUpdated(null)
+                    .multipleResults(false)
+                    .resultCount(0)
                     .build();
         }
         
-        CaseInstanceDocument document = caseInstance.get();
+        // Check if there are multiple results
+        if (caseInstances.size() > 1) {
+            log.warn("Multiple case instances ({}) found for document number: {} - flagging for manual review", 
+                    caseInstances.size(), documentNumber);
+            
+            // Get the most recently updated document for status information
+            CaseInstanceDocument latestDocument = caseInstances.stream()
+                    .max((d1, d2) -> {
+                        LocalDateTime t1 = d1.getUpdatedAt() != null ? d1.getUpdatedAt() : d1.getCreatedAt();
+                        LocalDateTime t2 = d2.getUpdatedAt() != null ? d2.getUpdatedAt() : d2.getCreatedAt();
+                        if (t1 == null) return -1;
+                        if (t2 == null) return 1;
+                        return t1.compareTo(t2);
+                    })
+                    .orElse(caseInstances.get(0));
+            
+            return CaseAnalysisResult.builder()
+                    .found(true)
+                    .caseStatus(latestDocument.getCaseStatus())
+                    .statusField(latestDocument.getStatus())
+                    .isInProgress(false) // Don't process automatically
+                    .isStale(false)
+                    .lastUpdated(latestDocument.getUpdatedAt())
+                    .createdDate(latestDocument.getCreatedAt())
+                    .multipleResults(true)
+                    .resultCount(caseInstances.size())
+                    .requiresManualReview(true)
+                    .manualReviewReason("Multiple case instances found (" + caseInstances.size() + " results)")
+                    .build();
+        }
+        
+        CaseInstanceDocument document = caseInstances.get(0);
         String caseStatus = document.getCaseStatus();
         
         // Check caseStatus field first (preferred), fallback to status field
@@ -78,7 +112,7 @@ public class CaseMongoService {
             
             if (lastUpdated != null) {
                 // Use business days calculation (excluding weekends)
-                isStale = BusinessDaysCalculator.isOlderThanBusinessDays(lastUpdated, businessDaysThreshold);
+                isStale = usBusinessDayService.isDateDifferTwo(lastUpdated.toLocalDate(), 2);
             }
         }
         
@@ -93,6 +127,10 @@ public class CaseMongoService {
                 .isStale(isStale)
                 .lastUpdated(lastUpdated)
                 .createdDate(document.getCreatedAt())
+                .multipleResults(false)
+                .resultCount(1)
+                .requiresManualReview(false)
+                .manualReviewReason(null)
                 .build();
     }
     
@@ -111,6 +149,10 @@ public class CaseMongoService {
         private boolean isStale;            // Is it older than threshold?
         private LocalDateTime lastUpdated;  // Last updated timestamp
         private LocalDateTime createdDate;  // Created timestamp
+        private boolean multipleResults;    // Were multiple results found?
+        private int resultCount;            // Number of results found
+        private boolean requiresManualReview; // Should this be manually reviewed?
+        private String manualReviewReason;  // Why manual review is needed
     }
     
 

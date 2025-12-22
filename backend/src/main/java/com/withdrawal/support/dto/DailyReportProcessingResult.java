@@ -19,6 +19,7 @@ public class DailyReportProcessingResult {
     private int successfulCases;
     private int failedCases;
     private int manualReviewRequired;
+    private int activeCase;
     
     @Builder.Default
     private List<String> businessKeysExtracted = new ArrayList<>();
@@ -37,7 +38,10 @@ public class DailyReportProcessingResult {
     
     @Builder.Default
     private List<String> documentNumbersForManualReview = new ArrayList<>();
-    
+
+    @Builder.Default
+    private List<String> documentNumbersWithActiveInstances = new ArrayList<>();
+
     private String message;
 }
 

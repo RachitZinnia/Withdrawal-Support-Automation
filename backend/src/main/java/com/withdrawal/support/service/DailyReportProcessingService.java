@@ -37,6 +37,7 @@ public class DailyReportProcessingService {
                 .documentNumbersToReturning(new ArrayList<>())
                 .documentNumbersToComplete(new ArrayList<>())
                 .documentNumbersForManualReview(new ArrayList<>())
+                .documentNumbersWithActiveInstances(new ArrayList<>())
                 .build();
 
         try {
@@ -51,7 +52,10 @@ public class DailyReportProcessingService {
             log.info("Found {} 'Not Matching' rows", notMatchingRows.size());
 
             // Step 3: Extract business keys
-            List<String> businessKeys = csvProcessingService.extractBusinessKeys(notMatchingRows);
+//            List<String> businessKeys = csvProcessingService.extractBusinessKeys(notMatchingRows);
+            List<String> businessKeys = new ArrayList<>();
+            businessKeys.add("20251217-EM-106066");
+//            List<String> businessKeys = List.of("20251208-W-608306");
             result.setBusinessKeysExtracted(businessKeys);
             log.info("Extracted {} unique business keys", businessKeys.size());
 
@@ -116,13 +120,18 @@ public class DailyReportProcessingService {
         
         try {
             // Step 1: Get process instance IDs for this business key
-            List<String> processInstanceIds = getProcessInstanceIdsFromBusinessKey(businessKey);
-            log.info("Found {} process instances for business key: {}", processInstanceIds.size(), businessKey);
+            DataEntryService.ProcessInstanceResult processResult = getProcessInstanceIdsFromBusinessKey(businessKey);
+            List<String> processInstanceIds = processResult.getProcessInstanceIds();
+            boolean hasActiveInstances = processResult.isHasActiveInstances();
+            
+            log.info("Found {} process instances for business key: {} (hasActive: {})", 
+                    processInstanceIds.size(), businessKey, hasActiveInstances);
             
             // Step 2: Process each process instance
             for (String processInstanceId : processInstanceIds) {
                 try {
-                    CaseProcessingDetail detail = processProcessInstanceFromBusinessKey(processInstanceId, result);
+                    CaseProcessingDetail detail = processProcessInstanceFromBusinessKey(
+                            processInstanceId, result, hasActiveInstances);
                     caseDetails.add(detail);
                 } catch (Exception e) {
                     log.error("Error processing process instance {}: {}", processInstanceId, e.getMessage());
@@ -144,9 +153,9 @@ public class DailyReportProcessingService {
 
     /**
      * Gets process instance IDs from a business key
-     * Calls Camunda API: /process-instance?businessKey={businessKey}
+     * Calls Camunda API: /history/process-instance?processInstanceBusinessKey={businessKey}
      */
-    private List<String> getProcessInstanceIdsFromBusinessKey(String businessKey) {
+    private DataEntryService.ProcessInstanceResult getProcessInstanceIdsFromBusinessKey(String businessKey) {
         log.info("Fetching process instance IDs for business key: {}", businessKey);
         return dataEntryService.getProcessInstanceIdsByBusinessKey(businessKey);
     }
@@ -156,8 +165,10 @@ public class DailyReportProcessingService {
      * Similar logic to data entry waiting cases
      */
     private CaseProcessingDetail processProcessInstanceFromBusinessKey(String processInstanceId, 
-                                                                       DailyReportProcessingResult result) {
-        log.info("Processing process instance from business key: {}", processInstanceId);
+                                                                       DailyReportProcessingResult result, 
+                                                                       boolean hasActiveInstances) {
+        log.info("Processing process instance from business key: {} (hasActiveInstances: {})", 
+                processInstanceId, hasActiveInstances);
         
         CaseProcessingDetail detail = CaseProcessingDetail.builder()
                 .caseReference(processInstanceId)
@@ -181,8 +192,14 @@ public class DailyReportProcessingService {
 
             // Step 3: Categorize case based on status and BPM Follow-Up tasks
             CaseCategory category = onBaseService.categorizeCaseByStatus(onBaseDetails);
-            detail.setCategory(category);
             
+            // If there are active instances, override category to UNKNOWN
+            if (hasActiveInstances) {
+                log.info("Active instances found - setting category to UNKNOWN for manual review");
+                category = CaseCategory.WAITING_CASE;
+            }
+            
+            detail.setCategory(category);
             String categoryDescription = onBaseService.getCategoryDescription(category);
             detail.setAction(category.name());
 
@@ -208,14 +225,24 @@ public class DailyReportProcessingService {
                                       DailyReportProcessingResult result) {
         
         switch (category) {
+            case WAITING_CASE -> {
+                log.info("active process instance present marking it in active case");
+                detail.setStatus(CaseStatus.ACTIVE_CASE);
+                detail.setMessage(categoryDescription);
+
+                if (documentNumber !=null && !result.getDocumentNumbersWithActiveInstances().contains(documentNumber)){
+                    result.getDocumentNumbersWithActiveInstances().add(documentNumber);
+                    log.info("Added document {} to active instance list", documentNumber);
+                }
+            }
             case FOLLOW_UP_COMPLETE -> {
-                log.info("Case {} - All BPM Follow-Up complete, marking for cancellation", caseDetails.getCaseId());
-                detail.setStatus(CaseStatus.COMPLETED);
-                detail.setMessage(categoryDescription + " - Will cancel");
+                log.info("Case {} - All BPM Follow-Up complete, marking for manual review", caseDetails.getCaseId());
+                detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
+                detail.setMessage(categoryDescription + " - Will review manually");
                 
-                if (documentNumber != null && !result.getDocumentNumbersToCancel().contains(documentNumber)) {
-                    result.getDocumentNumbersToCancel().add(documentNumber);
-                    log.info("Added document {} to cancellation list", documentNumber);
+                if (documentNumber != null && !result.getDocumentNumbersForManualReview().contains(documentNumber)) {
+                    result.getDocumentNumbersForManualReview().add(documentNumber);
+                    log.info("Added document {} to manual review list", documentNumber);
                 }
             }
             

@@ -39,8 +39,8 @@ public class CaseProcessingService {
 
         try {
             // Step 1: Get all data entry waiting cases
-            // DataEntryCase deCase = new DataEntryCase("1","65bbefb7-be4d-11f0-b75b-0219df3ccdf7",false,"1");
-            // List<DataEntryCase> waitingCases = new ArrayList<>(List.of(deCase));
+//             DataEntryCase deCase = new DataEntryCase("1","e0f9cf1f-cb2d-11f0-9094-02acdda7ebbf",false,"1");
+//             List<DataEntryCase> waitingCases = new ArrayList<>(List.of(deCase));
             List<DataEntryCase> waitingCases = dataEntryService.getDataEntryWaitingCases();
             result.setTotalCases(waitingCases.size());
             log.info("Found {} waiting cases to process", waitingCases.size());
@@ -124,6 +124,7 @@ public class CaseProcessingService {
 
             detail.setOnbaseStatus(onBaseDetails.getStatus());
             String documentNumber = onBaseDetails.getDocumentNumber();
+            detail.setDocumentNumber(documentNumber);
 
             // Step 4: Categorize case based on status and BPM Follow-Up tasks
             CaseCategory category = onBaseService.categorizeCaseByStatus(onBaseDetails);
@@ -176,7 +177,22 @@ public class CaseProcessingService {
                             businessConfig.getDaysThreshold()
                     );
                     
-                    if (!mongoAnalysis.isInProgress()) {
+                    // Check if multiple results were found - requires manual review
+                    if (mongoAnalysis.isMultipleResults()) {
+                        log.warn("Document {} - Multiple case instances found ({}), flagging for manual review", 
+                                documentNumber, mongoAnalysis.getResultCount());
+                        detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
+                        detail.setMessage(categoryDescription + " - " + mongoAnalysis.getManualReviewReason());
+                        detail.setRequiresManualReview(true);
+                        detail.setReviewReason(mongoAnalysis.getManualReviewReason());
+                        
+                        // Add to manual review list
+                        if (documentNumber != null && !result.getDocumentNumbersForManualReview().contains(documentNumber)) {
+                            result.getDocumentNumbersForManualReview().add(documentNumber);
+                            log.info("Added document {} to manual review list (multiple results)", documentNumber);
+                        }
+                    }
+                    else if (!mongoAnalysis.isInProgress()) {
                         // caseStatus is NOT IN_PROGRESS - add to cancellation list
                         log.info("Document {} - caseStatus '{}' is NOT IN_PROGRESS, marking for cancellation", 
                                 documentNumber, mongoAnalysis.getCaseStatus());
