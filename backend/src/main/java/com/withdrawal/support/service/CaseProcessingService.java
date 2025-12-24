@@ -39,7 +39,7 @@ public class CaseProcessingService {
 
         try {
             // Step 1: Get all data entry waiting cases
-//             DataEntryCase deCase = new DataEntryCase("1","e0f9cf1f-cb2d-11f0-9094-02acdda7ebbf",false,"1");
+//             DataEntryCase deCase = new DataEntryCase("1","d6608ee7-e090-11f0-a84d-025eefd42701",false,"1");
 //             List<DataEntryCase> waitingCases = new ArrayList<>(List.of(deCase));
             List<DataEntryCase> waitingCases = dataEntryService.getDataEntryWaitingCases();
             result.setTotalCases(waitingCases.size());
@@ -64,8 +64,8 @@ public class CaseProcessingService {
                     result.setFailedCases(result.getFailedCases() + 1);
                     result.getDetails().add(CaseProcessingDetail.builder()
                             .caseReference(dataEntryCase.getProcessInstanceId())
-                            .status(CaseStatus.FAILED)
-                            .message("Error: " + e.getMessage())
+                            .status(CaseStatus.MANUAL_REVIEW_REQUIRED)
+                            .message("Error: " + e.getMessage() + " manual review").requiresManualReview(true).reviewReason("Exception")
                             .processedAt(LocalDateTime.now())
                             .build());
                 }
@@ -109,7 +109,7 @@ public class CaseProcessingService {
                 .caseReference(dataEntryCase.getProcessInstanceId())
                 .processedAt(LocalDateTime.now())
                 .build();
-
+        String documentNumber = "";
         try {
             // Step 2: Get case details from Camunda (clientCode and onbaseCaseId)
             CaseDetails caseDetails = dataEntryService.getCaseDetails(dataEntryCase.getProcessInstanceId());
@@ -123,8 +123,14 @@ public class CaseProcessingService {
             );
 
             detail.setOnbaseStatus(onBaseDetails.getStatus());
-            String documentNumber = onBaseDetails.getDocumentNumber();
+            documentNumber = onBaseDetails.getDocumentNumber();
             detail.setDocumentNumber(documentNumber);
+            
+            // Get BPM Follow-Up status and set it on the detail
+            OnBaseService.BpmFollowUpStatus bpmStatus = onBaseService.getBpmFollowUpStatus(onBaseDetails);
+            detail.setBpmFollowUpStatus(bpmStatus.getStatusText());
+            detail.setBpmFollowUpTotal(bpmStatus.getTotal());
+            detail.setBpmFollowUpOpen(bpmStatus.getOpen());
 
             // Step 4: Categorize case based on status and BPM Follow-Up tasks
             CaseCategory category = onBaseService.categorizeCaseByStatus(onBaseDetails);
@@ -193,22 +199,43 @@ public class CaseProcessingService {
                         }
                     }
                     else if (!mongoAnalysis.isInProgress()) {
-                        // caseStatus is NOT IN_PROGRESS - add to cancellation list
-                        log.info("Document {} - caseStatus '{}' is NOT IN_PROGRESS, marking for cancellation", 
-                                documentNumber, mongoAnalysis.getCaseStatus());
-                        detail.setStatus(CaseStatus.COMPLETED);
-                        detail.setMessage(categoryDescription + 
-                                " - MongoDB caseStatus: " + mongoAnalysis.getCaseStatus() + " (NOT IN_PROGRESS) - Will cancel");
-                        
-                        // Add to cancellation list
-                        if (documentNumber != null && !result.getDocumentNumbersToCancel().contains(documentNumber)) {
-                            result.getDocumentNumbersToCancel().add(documentNumber);
-                            log.info("Added document {} to cancellation list (MongoDB NOT IN_PROGRESS)", documentNumber);
+
+                        if (mongoAnalysis.getCaseStatus().equalsIgnoreCase("COMPLETE")) {
+                            // caseStatus is NOT IN_PROGRESS - add to cancellation list
+                            log.info("Document {} - caseStatus '{}' is NOT IN_PROGRESS, marking for cancellation",
+                                    documentNumber, mongoAnalysis.getCaseStatus());
+                            detail.setStatus(CaseStatus.COMPLETED);
+                            detail.setMessage(categoryDescription +
+                                    " - MongoDB caseStatus: " + mongoAnalysis.getCaseStatus() + " (is Complete) - Will cancel");
+
+                            // Add to cancellation list
+                            if (documentNumber != null && !result.getDocumentNumbersToCancel().contains(documentNumber)) {
+                                result.getDocumentNumbersToCancel().add(documentNumber);
+                                log.info("Added document {} to cancellation list (MongoDB NOT IN_PROGRESS)", documentNumber);
+                            }
+                            if (documentNumber != null && !result.getDocumentNumbersToReturning().contains(documentNumber)) {
+                                result.getDocumentNumbersToReturning().add(documentNumber);
+                                log.info("Added document {} to returning list (MongoDB NOT IN_PROGRESS)", documentNumber);
+                            }
+                        } else if (mongoAnalysis.getCaseStatus().equalsIgnoreCase("EXCEPTION")) {
+                            // caseStatus is NOT IN_PROGRESS - add to cancellation list
+                            log.info("Document {} - caseStatus '{}' is Exception, marking for cancel",
+                                    documentNumber, mongoAnalysis.getCaseStatus());
+                            detail.setStatus(CaseStatus.EXCEPTION);
+                            detail.setMessage(categoryDescription +
+                                    " - MongoDB caseStatus: " + mongoAnalysis.getCaseStatus() + " (is exception) - Will cancel");
+
+                            // Add to cancellation list
+                            if (documentNumber != null && !result.getDocumentNumbersToCancel().contains(documentNumber)) {
+                                result.getDocumentNumbersToCancel().add(documentNumber);
+                                log.info("Added document {} to cancellation list (MongoDB in exception)", documentNumber);
+                            }
+                            if (documentNumber != null && !result.getDocumentNumbersToReturning().contains(documentNumber)) {
+                                result.getDocumentNumbersToReturning().add(documentNumber);
+                                log.info("Added document {} to returning list (MongoDB in exception)", documentNumber);
+                            }
                         }
-                        if (documentNumber != null && !result.getDocumentNumbersToReturning().contains(documentNumber)) {
-                            result.getDocumentNumbersToReturning().add(documentNumber);
-                            log.info("Added document {} to returning list (MongoDB NOT IN_PROGRESS)", documentNumber);
-                        }
+
  
                     } else {
                         // caseStatus IS IN_PROGRESS - check if stale
@@ -256,8 +283,13 @@ public class CaseProcessingService {
 
         } catch (Exception e) {
             log.error("Error processing case: {}", dataEntryCase.getProcessInstanceId(), e);
-            detail.setStatus(CaseStatus.FAILED);
-            detail.setMessage("Error: " + e.getMessage());
+            detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
+            detail.setMessage("Error: " + e.getMessage() + " Requires manual review");
+            detail.setRequiresManualReview(true);
+            detail.setReviewReason("Exception");
+            if (documentNumber != null && !result.getDocumentNumbersForManualReview().contains(documentNumber)) {
+                result.getDocumentNumbersForManualReview().add(documentNumber);
+            }
         }
 
         return detail;

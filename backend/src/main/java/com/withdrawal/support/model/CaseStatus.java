@@ -6,7 +6,9 @@ public enum CaseStatus {
     COMPLETED,
     FAILED,
     MANUAL_REVIEW_REQUIRED,
-    ACTIVE_CASE
+    ACTIVE_CASE,
+    EXCEPTION,
+    NO_ACTION_REQUIRED
 }
 
 

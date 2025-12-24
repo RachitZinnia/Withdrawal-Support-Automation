@@ -147,8 +147,67 @@ public class OnBaseService {
             case DV_POST_OPEN_DV_COMPLETE -> "Status 'Post Complete' with incomplete BPM Follow-Up - Will cancel";
             case CHECK_MONGODB -> "Status Pend/Pending/New with incomplete BPM Follow-Up - Check MongoDB";
             case WAITING_CASE -> "active process instance present";
+            case CASE_RETURNING -> "No active process instance, status Pend/New with BPM Follow-Up open - CP Returning";
             case UNKNOWN -> "Unknown category - Requires manual review";
         };
+    }
+
+    /**
+     * Represents the BPM Follow-Up status summary
+     */
+    public static class BpmFollowUpStatus {
+        private final int total;
+        private final int open;
+        private final int closed;
+        
+        public BpmFollowUpStatus(int total, int open, int closed) {
+            this.total = total;
+            this.open = open;
+            this.closed = closed;
+        }
+        
+        public int getTotal() { return total; }
+        public int getOpen() { return open; }
+        public int getClosed() { return closed; }
+        
+        public boolean isAllClosed() {
+            return total > 0 && open == 0;
+        }
+        
+        public String getStatusText() {
+            if (total == 0) {
+                return "N/A";
+            } else if (open == 0) {
+                return "All Closed";
+            } else {
+                return "Open (" + open + " of " + total + ")";
+            }
+        }
+    }
+
+    /**
+     * Gets the BPM Follow-Up status for a case
+     * Returns a summary of total, open, and closed BPM Follow-Up tasks
+     */
+    public BpmFollowUpStatus getBpmFollowUpStatus(OnBaseCaseDetails caseDetails) {
+        if (caseDetails == null || caseDetails.getTasks() == null) {
+            log.debug("Case details or tasks are null, returning N/A status");
+            return new BpmFollowUpStatus(0, 0, 0);
+        }
+        
+        List<OnBaseCaseDetails.Task> bpmFollowUpTasks = caseDetails.getTasks().stream()
+                .filter(task -> "BPM Follow-Up".equalsIgnoreCase(task.getTaskType()))
+                .toList();
+        
+        int total = bpmFollowUpTasks.size();
+        int closed = (int) bpmFollowUpTasks.stream()
+                .filter(task -> "Complete".equalsIgnoreCase(task.getStatus()))
+                .count();
+        int open = total - closed;
+        
+        log.debug("BPM Follow-Up status - Total: {}, Open: {}, Closed: {}", total, open, closed);
+        
+        return new BpmFollowUpStatus(total, open, closed);
     }
 }
 

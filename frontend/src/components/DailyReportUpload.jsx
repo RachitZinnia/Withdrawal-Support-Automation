@@ -1,13 +1,30 @@
-import React, { useState } from 'react';
-import { Upload, FileText, RefreshCw, CheckCircle, XCircle, AlertCircle, Clock } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Upload, FileText, RefreshCw, CheckCircle, XCircle, AlertCircle, Clock, Search } from 'lucide-react';
 import axios from 'axios';
 import './DailyReportUpload.css';
 
-const DailyReportUpload = () => {
-  const [selectedFile, setSelectedFile] = useState(null);
+const DailyReportUpload = ({ persistedState, onStateChange }) => {
+  const [selectedFile, setSelectedFile] = useState(persistedState?.selectedFile || null);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
+  const [result, setResult] = useState(persistedState?.result || null);
+  const [error, setError] = useState(persistedState?.error || null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Update parent state when result, error, or selectedFile changes
+  useEffect(() => {
+    onStateChange?.({ result, error, selectedFile });
+  }, [result, error, selectedFile]);
+
+  // Filter case details based on search query (document number)
+  const filteredDetails = result?.details?.filter(detail => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      detail.documentNumber?.toLowerCase().includes(query) ||
+      detail.caseId?.toLowerCase().includes(query) ||
+      detail.clientCode?.toLowerCase().includes(query)
+    );
+  }) || [];
 
   const handleFileSelect = (event) => {
     const file = event.target.files[0];
@@ -148,16 +165,6 @@ const DailyReportUpload = () => {
                 <p className="stat-value">{result.processedCases}</p>
               </div>
             </div>
-
-            <div className="stat-card stat-success">
-              <div className="stat-icon">
-                <CheckCircle size={24} />
-              </div>
-              <div className="stat-content">
-                <p className="stat-label">Successful</p>
-                <p className="stat-value">{result.successfulCases}</p>
-              </div>
-            </div>
           </div>
 
           {/* Document Numbers Section */}
@@ -232,43 +239,89 @@ const DailyReportUpload = () => {
 
           {result.details && result.details.length > 0 && (
             <div className="details-section">
-              <h4 className="details-title">Case Details</h4>
-              <div className="table-container">
-                <table className="details-table">
-                  <thead>
-                    <tr>
-                      <th>Process Instance</th>
-                      <th>Case ID</th>
-                      <th>Client Code</th>
-                      <th>OnBase Status</th>
-                      <th>Category</th>
-                      <th>Status</th>
-                      <th>Message</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.details.map((detail, index) => (
-                      <tr key={index}>
-                        <td className="case-ref">{detail.caseReference || '-'}</td>
-                        <td className="case-id">{detail.caseId || '-'}</td>
-                        <td className="client-code">{detail.clientCode || '-'}</td>
-                        <td className="onbase-status">{detail.onbaseStatus || '-'}</td>
-                        <td className="category-cell">
-                          <span className={`category-badge category-${detail.category?.toLowerCase()}`}>
-                            {detail.category || '-'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`status-badge status-${detail.status?.toLowerCase()}`}>
-                            {detail.status}
-                          </span>
-                        </td>
-                        <td className="message-cell">{detail.message || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="details-header">
+                <h4 className="details-title">Case Details</h4>
+                <div className="search-container">
+                  <Search className="search-icon" size={18} />
+                  <input
+                    type="text"
+                    className="search-input"
+                    placeholder="Search by document number, case ID, or client code..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <button 
+                      className="clear-search"
+                      onClick={() => setSearchQuery('')}
+                      aria-label="Clear search"
+                    >
+                      <XCircle size={16} />
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {filteredDetails.length > 0 ? (
+                <>
+                  <div className="search-results-info">
+                    Showing {filteredDetails.length} of {result.details.length} cases
+                  </div>
+                  <div className="table-container">
+                    <table className="details-table">
+                      <thead>
+                        <tr>
+                          <th>Document Number</th>
+                          <th>Case ID</th>
+                          <th>Client Code</th>
+                          <th>OnBase Status</th>
+                          <th>BPM Follow-Up</th>
+                          <th>Category</th>
+                          <th>Status</th>
+                          <th>Message</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredDetails.map((detail, index) => (
+                          <tr key={index}>
+                            <td className="document-number">{detail.documentNumber || '-'}</td>
+                            <td className="case-id">{detail.caseId || '-'}</td>
+                            <td className="client-code">{detail.clientCode || '-'}</td>
+                            <td className="onbase-status">{detail.onbaseStatus || '-'}</td>
+                            <td className="bpm-status-cell">
+                              <span className={`bpm-badge ${
+                                detail.bpmFollowUpStatus === 'All Closed' 
+                                  ? 'bpm-all-closed' 
+                                  : detail.bpmFollowUpStatus === 'N/A'
+                                  ? 'bpm-na'
+                                  : 'bpm-open'
+                              }`}>
+                                {detail.bpmFollowUpStatus || 'N/A'}
+                              </span>
+                            </td>
+                            <td className="category-cell">
+                              <span className={`category-badge category-${detail.category?.toLowerCase()}`}>
+                                {detail.category || '-'}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`status-badge status-${detail.status?.toLowerCase()}`}>
+                                {detail.status}
+                              </span>
+                            </td>
+                            <td className="message-cell">{detail.message || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <div className="no-results">
+                  <AlertCircle size={24} />
+                  <p>No cases found matching "{searchQuery}"</p>
+                </div>
+              )}
             </div>
           )}
         </div>

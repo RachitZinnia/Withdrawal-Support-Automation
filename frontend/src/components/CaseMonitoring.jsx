@@ -1,13 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Play, RefreshCw, CheckCircle, XCircle, AlertCircle, Clock, Search } from 'lucide-react';
 import axios from 'axios';
 import './CaseMonitoring.css';
 
-const CaseMonitoring = () => {
+const CaseMonitoring = ({ persistedState, onStateChange }) => {
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
+  const [result, setResult] = useState(persistedState?.result || null);
+  const [error, setError] = useState(persistedState?.error || null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Update parent state when result or error changes
+  useEffect(() => {
+    onStateChange?.({ result, error });
+  }, [result, error]);
 
   const handleProcessCases = async () => {
     setLoading(true);
@@ -31,11 +36,10 @@ const CaseMonitoring = () => {
     
     const query = searchQuery.toLowerCase();
     return (
+      detail.documentNumber?.toLowerCase().includes(query) ||
       detail.caseReference?.toLowerCase().includes(query) ||
       detail.caseId?.toLowerCase().includes(query) ||
-      detail.documentNumber?.toLowerCase().includes(query) ||
       detail.status?.toLowerCase().includes(query) ||
-      detail.action?.toLowerCase().includes(query) ||
       detail.message?.toLowerCase().includes(query) ||
       detail.reviewReason?.toLowerCase().includes(query)
     );
@@ -228,7 +232,7 @@ const CaseMonitoring = () => {
                   <input
                     type="text"
                     className="search-input"
-                    placeholder="Search by case reference, ID, document number, status, action, or message..."
+                    placeholder="Search by document number, case reference, ID, status, or message..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -253,11 +257,11 @@ const CaseMonitoring = () => {
                     <table className="details-table">
                       <thead>
                         <tr>
+                          <th>Document Number</th>
                           <th>Case Reference</th>
                           <th>Case ID</th>
-                          <th>Document Number</th>
+                          <th>BPM Follow-Up</th>
                           <th>Status</th>
-                          <th>Action</th>
                           <th>Message</th>
                           <th>Manual Review</th>
                         </tr>
@@ -265,15 +269,25 @@ const CaseMonitoring = () => {
                       <tbody>
                         {filteredDetails.map((detail, index) => (
                           <tr key={index}>
+                            <td className="document-number">{detail.documentNumber || '-'}</td>
                             <td className="case-ref">{detail.caseReference || '-'}</td>
                             <td className="case-id">{detail.caseId || '-'}</td>
-                            <td className="document-number">{detail.documentNumber || '-'}</td>
+                            <td className="bpm-status-cell">
+                              <span className={`bpm-badge ${
+                                detail.bpmFollowUpStatus === 'All Closed' 
+                                  ? 'bpm-all-closed' 
+                                  : detail.bpmFollowUpStatus === 'N/A'
+                                  ? 'bpm-na'
+                                  : 'bpm-open'
+                              }`}>
+                                {detail.bpmFollowUpStatus || 'N/A'}
+                              </span>
+                            </td>
                             <td>
                               <span className={`status-badge status-${detail.status?.toLowerCase()}`}>
                                 {detail.status}
                               </span>
                             </td>
-                            <td className="action-cell">{detail.action || '-'}</td>
                             <td className="message-cell">{detail.message || '-'}</td>
                             <td className="text-center">
                               {detail.requiresManualReview ? (

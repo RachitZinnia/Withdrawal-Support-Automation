@@ -26,5 +26,10 @@ public class CaseProcessingDetail {
     private LocalDateTime processedAt;
     private boolean requiresManualReview;
     private String reviewReason;
+    
+    // BPM Follow-Up status: "All Closed", "Open (X of Y)", or "N/A"
+    private String bpmFollowUpStatus;
+    private int bpmFollowUpTotal;
+    private int bpmFollowUpOpen;
 }
 

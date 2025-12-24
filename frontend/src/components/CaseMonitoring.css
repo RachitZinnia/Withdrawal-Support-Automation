@@ -408,6 +408,35 @@
   color: var(--warning-color);
 }
 
+/* BPM Follow-Up Status Styles */
+.bpm-status-cell {
+  text-align: center;
+}
+
+.bpm-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bpm-all-closed {
+  background-color: var(--success-light);
+  color: var(--success-color);
+}
+
+.bpm-open {
+  background-color: var(--warning-light);
+  color: var(--warning-color);
+}
+
+.bpm-na {
+  background-color: var(--gray-100);
+  color: var(--gray-500);
+}
+
 .action-cell {
   font-weight: 500;
   color: var(--gray-700);

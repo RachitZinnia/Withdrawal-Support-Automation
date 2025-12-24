@@ -52,9 +52,9 @@ public class DailyReportProcessingService {
             log.info("Found {} 'Not Matching' rows", notMatchingRows.size());
 
             // Step 3: Extract business keys
-//            List<String> businessKeys = csvProcessingService.extractBusinessKeys(notMatchingRows);
-            List<String> businessKeys = new ArrayList<>();
-            businessKeys.add("20251217-EM-106066");
+            List<String> businessKeys = csvProcessingService.extractBusinessKeys(notMatchingRows);
+//            List<String> businessKeys = new ArrayList<>();
+//            businessKeys.add("20251217-EM-106066");
 //            List<String> businessKeys = List.of("20251208-W-608306");
             result.setBusinessKeysExtracted(businessKeys);
             log.info("Extracted {} unique business keys", businessKeys.size());
@@ -80,6 +80,13 @@ public class DailyReportProcessingService {
                 } catch (Exception e) {
                     log.error("Error processing business key: {}", businessKey, e);
                     result.setFailedCases(result.getFailedCases() + 1);
+                    
+                    // Add business key to manual review list due to exception
+                    if (!result.getDocumentNumbersForManualReview().contains(businessKey)) {
+                        result.getDocumentNumbersForManualReview().add(businessKey);
+                        log.info("Added business key {} to manual review list due to exception: {}", 
+                                businessKey, e.getMessage());
+                    }
                 }
             }
 
@@ -189,6 +196,13 @@ public class DailyReportProcessingService {
 
             detail.setOnbaseStatus(onBaseDetails.getStatus());
             String documentNumber = onBaseDetails.getDocumentNumber();
+            detail.setDocumentNumber(documentNumber);
+            
+            // Get BPM Follow-Up status and set it on the detail
+            OnBaseService.BpmFollowUpStatus bpmStatus = onBaseService.getBpmFollowUpStatus(onBaseDetails);
+            detail.setBpmFollowUpStatus(bpmStatus.getStatusText());
+            detail.setBpmFollowUpTotal(bpmStatus.getTotal());
+            detail.setBpmFollowUpOpen(bpmStatus.getOpen());
 
             // Step 3: Categorize case based on status and BPM Follow-Up tasks
             CaseCategory category = onBaseService.categorizeCaseByStatus(onBaseDetails);
@@ -237,66 +251,26 @@ public class DailyReportProcessingService {
             }
             case FOLLOW_UP_COMPLETE -> {
                 log.info("Case {} - All BPM Follow-Up complete, marking for manual review", caseDetails.getCaseId());
-                detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
-                detail.setMessage(categoryDescription + " - Will review manually");
-                
-                if (documentNumber != null && !result.getDocumentNumbersForManualReview().contains(documentNumber)) {
-                    result.getDocumentNumbersForManualReview().add(documentNumber);
-                    log.info("Added document {} to manual review list", documentNumber);
-                }
+                detail.setStatus(CaseStatus.NO_ACTION_REQUIRED);
+                detail.setMessage(categoryDescription + " - No Action Required");
+
             }
             
             case DV_POST_OPEN_DV_COMPLETE -> {
                 log.info("Case {} - Post Complete with incomplete BPM Follow-Up", caseDetails.getCaseId());
                 detail.setStatus(CaseStatus.COMPLETED);
                 detail.setMessage(categoryDescription + " - Will cancel");
-                
-                if (documentNumber != null && !result.getDocumentNumbersToCancel().contains(documentNumber)) {
-                    result.getDocumentNumbersToCancel().add(documentNumber);
-                }
+
                 if (documentNumber != null && !result.getDocumentNumbersToComplete().contains(documentNumber)) {
                     result.getDocumentNumbersToComplete().add(documentNumber);
                 }
             }
             
-            case CHECK_MONGODB -> {
-                log.info("Case {} - Checking MongoDB for document: {}", caseDetails.getCaseId(), documentNumber);
-                
-                CaseMongoService.CaseAnalysisResult mongoAnalysis = caseMongoService.analyzeCaseFromMongo(
-                        documentNumber, 
-                        businessConfig.getDaysThreshold()
-                );
-                
-                if (!mongoAnalysis.isInProgress()) {
-                    log.info("Document {} - NOT IN_PROGRESS, marking for cancellation", documentNumber);
-                    detail.setStatus(CaseStatus.COMPLETED);
-                    detail.setMessage(categoryDescription + " - MongoDB caseStatus: " + 
-                            mongoAnalysis.getCaseStatus() + " - Will cancel");
-                    
-                    if (documentNumber != null && !result.getDocumentNumbersToCancel().contains(documentNumber)) {
-                        result.getDocumentNumbersToCancel().add(documentNumber);
-                    }
-                    if (documentNumber != null && !result.getDocumentNumbersToReturning().contains(documentNumber)) {
-                        result.getDocumentNumbersToReturning().add(documentNumber);
-                    }
-                    
-                } else {
-                    log.info("Document {} is IN_PROGRESS", documentNumber);
-                    
-                    if (mongoAnalysis.isStale()) {
-                        log.warn("Document {} is stale, flagging for manual review", documentNumber);
-                        detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
-                        detail.setMessage(categoryDescription + " - IN_PROGRESS but stale - Manual review");
-                        detail.setRequiresManualReview(true);
-                        detail.setReviewReason("IN_PROGRESS for more than " + businessConfig.getDaysThreshold() + " business days");
-                        
-                        if (documentNumber != null && !result.getDocumentNumbersForManualReview().contains(documentNumber)) {
-                            result.getDocumentNumbersForManualReview().add(documentNumber);
-                        }
-                    } else {
-                        detail.setStatus(CaseStatus.IN_PROGRESS);
-                        detail.setMessage(categoryDescription + " - IN_PROGRESS, continue monitoring");
-                    }
+            case CASE_RETURNING -> {
+                log.info("Case {} - adding to CP Returing queue since no active instance found and bpm follow up open for document: {}", caseDetails.getCaseId(), documentNumber);
+
+                if (documentNumber != null && !result.getDocumentNumbersToReturning().contains(documentNumber)) {
+                    result.getDocumentNumbersToReturning().add(documentNumber);
                 }
             }
             
