@@ -164,7 +164,7 @@ public class DailyReportProcessingService {
      */
     private DataEntryService.ProcessInstanceResult getProcessInstanceIdsFromBusinessKey(String businessKey) {
         log.info("Fetching process instance IDs for business key: {}", businessKey);
-        return dataEntryService.getProcessInstanceIdsByBusinessKey(businessKey);
+        return dataEntryService.getProcessInstanceIdsByBusinessKey(businessKey,"");
     }
 
     /**

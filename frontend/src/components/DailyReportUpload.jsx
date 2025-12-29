@@ -1,19 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Upload, FileText, RefreshCw, CheckCircle, XCircle, AlertCircle, Clock, Search } from 'lucide-react';
 import axios from 'axios';
 import './DailyReportUpload.css';
 
 const DailyReportUpload = ({ persistedState, onStateChange }) => {
   const [selectedFile, setSelectedFile] = useState(persistedState?.selectedFile || null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(persistedState?.loading || false);
   const [result, setResult] = useState(persistedState?.result || null);
   const [error, setError] = useState(persistedState?.error || null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Update parent state when result, error, or selectedFile changes
-  useEffect(() => {
-    onStateChange?.({ result, error, selectedFile });
-  }, [result, error, selectedFile]);
+  // Helper to update both local and parent state
+  const updateState = (newState) => {
+    if (newState.result !== undefined) setResult(newState.result);
+    if (newState.error !== undefined) setError(newState.error);
+    if (newState.loading !== undefined) setLoading(newState.loading);
+    if (newState.selectedFile !== undefined) setSelectedFile(newState.selectedFile);
+    onStateChange?.(prev => ({ ...prev, ...newState }));
+  };
 
   // Filter case details based on search query (document number)
   const filteredDetails = result?.details?.filter(detail => {
@@ -30,24 +34,20 @@ const DailyReportUpload = ({ persistedState, onStateChange }) => {
     const file = event.target.files[0];
     if (file) {
       if (file.name.toLowerCase().endsWith('.csv')) {
-        setSelectedFile(file);
-        setError(null);
+        updateState({ selectedFile: file, error: null });
       } else {
-        setError('Please select a CSV file');
-        setSelectedFile(null);
+        updateState({ error: 'Please select a CSV file', selectedFile: null });
       }
     }
   };
 
   const handleUpload = async () => {
     if (!selectedFile) {
-      setError('Please select a CSV file first');
+      updateState({ error: 'Please select a CSV file first' });
       return;
     }
 
-    setLoading(true);
-    setError(null);
-    setResult(null);
+    updateState({ loading: true, error: null, result: null });
 
     const formData = new FormData();
     formData.append('file', selectedFile);
@@ -58,11 +58,12 @@ const DailyReportUpload = ({ persistedState, onStateChange }) => {
           'Content-Type': 'multipart/form-data',
         },
       });
-      setResult(response.data);
+      updateState({ result: response.data, loading: false });
     } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Failed to process daily report');
-    } finally {
-      setLoading(false);
+      updateState({ 
+        error: err.response?.data?.message || err.message || 'Failed to process daily report',
+        loading: false 
+      });
     }
   };
 

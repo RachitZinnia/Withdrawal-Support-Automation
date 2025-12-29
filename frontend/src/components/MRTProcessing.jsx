@@ -1,32 +1,34 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Play, RefreshCw, CheckCircle, XCircle, AlertCircle, Clock, Search } from 'lucide-react';
 import axios from 'axios';
 import './MRTProcessing.css';
 
 const MRTProcessing = ({ persistedState, onStateChange }) => {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(persistedState?.loading || false);
   const [result, setResult] = useState(persistedState?.result || null);
   const [error, setError] = useState(persistedState?.error || null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Update parent state when result or error changes
-  useEffect(() => {
-    onStateChange?.({ result, error });
-  }, [result, error]);
+  // Helper to update both local and parent state
+  const updateState = (newState) => {
+    if (newState.result !== undefined) setResult(newState.result);
+    if (newState.error !== undefined) setError(newState.error);
+    if (newState.loading !== undefined) setLoading(newState.loading);
+    onStateChange?.(prev => ({ ...prev, ...newState }));
+  };
 
   const handleProcessCases = async () => {
-    setLoading(true);
-    setError(null);
-    setResult(null);
+    updateState({ loading: true, error: null, result: null });
     setSearchQuery('');
 
     try {
       const response = await axios.post('/api/mrt/process');
-      setResult(response.data);
+      updateState({ result: response.data, loading: false });
     } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Failed to process MRT cases');
-    } finally {
-      setLoading(false);
+      updateState({ 
+        error: err.response?.data?.message || err.message || 'Failed to process MRT cases',
+        loading: false 
+      });
     }
   };
 

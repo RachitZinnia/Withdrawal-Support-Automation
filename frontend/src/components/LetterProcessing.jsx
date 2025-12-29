@@ -1,39 +1,41 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Play, RefreshCw, CheckCircle, XCircle, AlertCircle, Download, FileSpreadsheet, Clock, Search } from 'lucide-react';
 import axios from 'axios';
 import './LetterProcessing.css';
 
 const LetterProcessing = ({ persistedState, onStateChange }) => {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(persistedState?.loading || false);
   const [downloading, setDownloading] = useState(false);
   const [result, setResult] = useState(persistedState?.result || null);
   const [error, setError] = useState(persistedState?.error || null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Update parent state when result or error changes
-  useEffect(() => {
-    onStateChange?.({ result, error });
-  }, [result, error]);
+  // Helper to update both local and parent state
+  const updateState = (newState) => {
+    if (newState.result !== undefined) setResult(newState.result);
+    if (newState.error !== undefined) setError(newState.error);
+    if (newState.loading !== undefined) setLoading(newState.loading);
+    onStateChange?.(prev => ({ ...prev, ...newState }));
+  };
 
   const handleProcessCases = async () => {
-    setLoading(true);
-    setError(null);
-    setResult(null);
+    updateState({ loading: true, error: null, result: null });
     setSearchQuery('');
 
     try {
       const response = await axios.post('/api/letter/process');
-      setResult(response.data);
+      updateState({ result: response.data, loading: false });
     } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Failed to process letter cases');
-    } finally {
-      setLoading(false);
+      updateState({ 
+        error: err.response?.data?.message || err.message || 'Failed to process letter cases',
+        loading: false 
+      });
     }
   };
 
   const handleDownloadExcel = async () => {
     setDownloading(true);
-    setError(null);
+    updateState({ error: null });
 
     try {
       const response = await axios.get('/api/letter/process/excel', {
@@ -62,7 +64,7 @@ const LetterProcessing = ({ persistedState, onStateChange }) => {
       window.URL.revokeObjectURL(url);
       
     } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Failed to download Excel file');
+      updateState({ error: err.response?.data?.message || err.message || 'Failed to download Excel file' });
     } finally {
       setDownloading(false);
     }

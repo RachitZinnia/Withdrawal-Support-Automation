@@ -1,27 +1,24 @@
 package com.withdrawal.support.service;
 
 import com.withdrawal.support.config.ApiConfig;
-import com.withdrawal.support.dto.CamundaVariable;
-import com.withdrawal.support.dto.CaseDetails;
-import com.withdrawal.support.dto.DataEntryCase;
-import com.withdrawal.support.dto.ProcessDetail;
+import com.withdrawal.support.dto.*;
 import com.withdrawal.support.model.ProcessResult;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -40,6 +37,9 @@ public class DataEntryService {
 
     private final ApiConfig apiConfig;
     private final WebClient.Builder webClientBuilder;
+
+    @Autowired
+    OnBaseService onBaseService;
 
     /**
      * Fetches all data entry waiting cases from the Camunda BPM API
@@ -152,7 +152,7 @@ public class DataEntryService {
      * Gets a specific variable from a Camunda process instance using history API
      * Endpoint: /history/variable-instance?processInstanceId={processInstanceId}&variableName={variableName}
      */
-    public String getCamundaVariable(String processInstanceId, String variableName) {
+    public String  getCamundaVariable(String processInstanceId, String variableName) {
         log.debug("Fetching Camunda variable '{}' for process instance: {}", variableName, processInstanceId);
 
         try {
@@ -200,7 +200,7 @@ public class DataEntryService {
      *
      * Endpoint: /history/process-instance?processInstanceBusinessKey={businessKey}
      */
-    public ProcessInstanceResult getProcessInstanceIdsByBusinessKey(String businessKey) {
+    public ProcessInstanceResult getProcessInstanceIdsByBusinessKey(String businessKey, String definitonKey) {
         log.info("Fetching process instance IDs for business key: {}", businessKey);
 
         try {
@@ -208,19 +208,36 @@ public class DataEntryService {
                     .baseUrl(apiConfig.getDataentry().getUrl())
                     .build();
 
-            List<Map<String, Object>> processInstances = webClient.get()
-                    .uri(uriBuilder -> uriBuilder
-                            .path("/history/process-instance")
-                            .queryParam("processInstanceBusinessKey", businessKey)
-                            .build())
-                    .retrieve()
-                    .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
-                    .onErrorResume(e -> {
-                        log.error("Error fetching process instances for business key {}: {}",
-                                businessKey, e.getMessage());
-                        return Mono.just(List.of());
-                    })
-                    .block();
+            List<Map<String, Object>> processInstances = new ArrayList<>();
+            if (definitonKey.isEmpty()) {
+                processInstances = webClient.get()
+                        .uri(uriBuilder -> uriBuilder
+                                .path("/history/process-instance")
+                                .queryParam("processInstanceBusinessKey", businessKey)
+                                .build())
+                        .retrieve()
+                        .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
+                        .onErrorResume(e -> {
+                            log.error("Error fetching process instances for business key {}: {}",
+                                    businessKey, e.getMessage());
+                            return Mono.just(List.of());
+                        })
+                        .block();
+            } else {
+                processInstances = webClient.get()
+                        .uri(uriBuilder -> uriBuilder
+                                .path("/history/process-instance")
+                                .queryParam("processInstanceBusinessKey", businessKey).queryParam("processDefinitionKey", definitonKey)
+                                .build())
+                        .retrieve()
+                        .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
+                        .onErrorResume(e -> {
+                            log.error("Error fetching process instances for business key {}: {}",
+                                    businessKey, e.getMessage());
+                            return Mono.just(List.of());
+                        })
+                        .block();
+            }
 
             if (processInstances == null || processInstances.isEmpty()) {
                 log.warn("No process instances found for business key: {}", businessKey);
@@ -244,7 +261,10 @@ public class DataEntryService {
             if (hasActiveInstances) {
                 log.info("Found ACTIVE process instance(s) for business key: {}", businessKey);
             }
-            
+            if (!definitonKey.isEmpty()) {
+                List<String> result = processInstances.stream().map(instance -> (String)instance.get("id")).collect(Collectors.toList());
+                return new ProcessInstanceResult(result, hasActiveInstances);
+            }
             // Debug: Log first instance structure to verify field names
             if (!processInstances.isEmpty()) {
                 log.debug("First instance keys: {}", processInstances.get(0).keySet());
@@ -307,6 +327,93 @@ public class DataEntryService {
             log.error("Failed to fetch process instances for business key: {}", businessKey, e);
             return new ProcessInstanceResult(List.of(), false);
         }
+    }
+
+
+    public String  getEmaiInfoFromBusinessKey(String businessKey) {
+
+        try {
+            WebClient webClient = webClientBuilder
+                    .baseUrl(apiConfig.getDataentry().getUrl())
+                    .build();
+
+            List<Map<String, Object>> processInstances = webClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/history/process-instance")
+                            .queryParam("processInstanceBusinessKey", businessKey)
+                            .build())
+                    .retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
+                    .onErrorResume(e -> {
+                        log.error("Error fetching process instances for business key {}: {}",
+                                businessKey, e.getMessage());
+                        return Mono.just(List.of());
+                    })
+                    .block();
+
+            List<String> letterIds = processInstances.stream()
+                    .filter(instance -> {
+                        String processDefKey = getProcessDefinitionKey(instance);
+                        boolean isLetterProcess = "letter_resolution_process".equals(processDefKey);
+                        boolean isActive = "ACTIVE".equalsIgnoreCase((String) instance.get("state"));
+                        if (isLetterProcess && isActive) {
+                            log.debug("Found Active letter_resolution_process instance: {}", instance.get("id"));
+                        }
+                        return isLetterProcess && isActive;
+                    }).map(instance -> (String) instance.get("id"))
+                    .filter(id -> id != null && !id.isEmpty())
+                    .toList();
+
+            TreeMap<String, String> startTimeAndDefKeyMap = new TreeMap<>(Comparator.reverseOrder());
+
+            if (letterIds.isEmpty()) {
+                processInstances.stream().forEach(instance ->{
+                    startTimeAndDefKeyMap.put((String)instance.get("startTime"), (String)instance.get("processDefinitionKey"));
+                });
+
+                String firstValue = "";
+                if (!startTimeAndDefKeyMap.isEmpty()) {
+                    firstValue = startTimeAndDefKeyMap.firstEntry().getValue();
+                }
+
+                if (firstValue.equalsIgnoreCase("letter_resolution_process")) {
+                    return "COMPLETE";
+                } else {
+                    String withdrawalId = processInstances.stream()
+                            .filter(instance -> {
+                                String processDefKey = getProcessDefinitionKey(instance);
+                                boolean iswithdrawalProcess = "withdrawal".equals(processDefKey);
+                                if (iswithdrawalProcess) {
+                                    log.debug("Found withdrawal instance: {}", instance.get("id"));
+                                }
+                                return iswithdrawalProcess;
+                            })
+                            .map(instance -> (String) instance.get("id"))
+                            .filter(id -> id != null && !id.isEmpty())
+                            .toList().get(0);
+
+                    String onbaseCaseId = getCamundaVariable(withdrawalId, "onbaseCaseId");
+                    String clientCode = getCamundaVariable(withdrawalId, "clientCode");
+                    OnBaseCaseDetails caseDetails = onBaseService.getOnBaseCaseDetails(clientCode, onbaseCaseId);
+                    List<OnBaseCaseDetails.Task> bpmFollowUpTasks = caseDetails.getTasks().stream()
+                            .filter(task -> "BPM Follow-Up".equalsIgnoreCase(task.getTaskType()))
+                            .toList();
+
+                    int total = bpmFollowUpTasks.size();
+                    int closed = (int) bpmFollowUpTasks.stream()
+                            .filter(task -> "Complete".equalsIgnoreCase(task.getStatus()))
+                            .count();
+                    int open = total - closed;
+                    if (open == 0) {
+                        return "CANCEL";
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            return "MANUAL_REVIEW";
+        }
+        return "MANUAL_REVIEW";
     }
     
     /**

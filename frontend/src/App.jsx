@@ -4,6 +4,7 @@ import CaseMonitoring from './components/CaseMonitoring'
 import DailyReportUpload from './components/DailyReportUpload'
 import MRTProcessing from './components/MRTProcessing'
 import LetterProcessing from './components/LetterProcessing'
+import EmailProcessing from './components/EmailProcessing'
 import Header from './components/Header'
 
 function App() {
@@ -13,22 +14,32 @@ function App() {
   const [dailyReportState, setDailyReportState] = useState({
     result: null,
     error: null,
-    selectedFile: null
+    selectedFile: null,
+    loading: false
   });
   
   const [caseMonitoringState, setCaseMonitoringState] = useState({
     result: null,
-    error: null
+    error: null,
+    loading: false
   });
   
   const [mrtState, setMrtState] = useState({
     result: null,
-    error: null
+    error: null,
+    loading: false
   });
   
   const [letterState, setLetterState] = useState({
     result: null,
-    error: null
+    error: null,
+    loading: false
+  });
+  
+  const [emailState, setEmailState] = useState({
+    result: null,
+    error: null,
+    loading: false
   });
 
   return (
@@ -60,31 +71,73 @@ function App() {
           >
             Letter Generation
           </button>
+          <button 
+            className={`tab ${activeTab === 'email' ? 'active' : ''}`}
+            onClick={() => setActiveTab('email')}
+          >
+            Email Resolution
+          </button>
         </div>
       </div>
       <main className="main-content">
         {activeTab === 'dailyreport' && (
           <DailyReportUpload 
             persistedState={dailyReportState}
-            onStateChange={setDailyReportState}
+            onStateChange={(updater) => {
+              if (typeof updater === 'function') {
+                setDailyReportState(prev => updater(prev));
+              } else {
+                setDailyReportState(updater);
+              }
+            }}
           />
         )}
         {activeTab === 'dataentry' && (
           <CaseMonitoring 
             persistedState={caseMonitoringState}
-            onStateChange={setCaseMonitoringState}
+            onStateChange={(updater) => {
+              if (typeof updater === 'function') {
+                setCaseMonitoringState(prev => updater(prev));
+              } else {
+                setCaseMonitoringState(updater);
+              }
+            }}
           />
         )}
         {activeTab === 'mrt' && (
           <MRTProcessing 
             persistedState={mrtState}
-            onStateChange={setMrtState}
+            onStateChange={(updater) => {
+              if (typeof updater === 'function') {
+                setMrtState(prev => updater(prev));
+              } else {
+                setMrtState(updater);
+              }
+            }}
           />
         )}
         {activeTab === 'letter' && (
           <LetterProcessing 
             persistedState={letterState}
-            onStateChange={setLetterState}
+            onStateChange={(updater) => {
+              if (typeof updater === 'function') {
+                setLetterState(prev => updater(prev));
+              } else {
+                setLetterState(updater);
+              }
+            }}
+          />
+        )}
+        {activeTab === 'email' && (
+          <EmailProcessing 
+            persistedState={emailState}
+            onStateChange={(updater) => {
+              if (typeof updater === 'function') {
+                setEmailState(prev => updater(prev));
+              } else {
+                setEmailState(updater);
+              }
+            }}
           />
         )}
       </main>
