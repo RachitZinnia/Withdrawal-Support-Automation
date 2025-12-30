@@ -21,7 +21,7 @@ public class UsBusinessDayService {
             inputDate = inputDate.plusDays(1);
         }
 
-        return cnt > days;
+        return cnt >= days;
     }
 
     private boolean isBusinessDay(LocalDate date) {
