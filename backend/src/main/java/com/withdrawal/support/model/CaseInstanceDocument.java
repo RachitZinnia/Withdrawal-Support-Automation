@@ -23,10 +23,12 @@ public class CaseInstanceDocument {
     
     private List<Identifier> identifiers;
     private String status;
+    private String correlationId;
     private String caseStatus;  // Additional status field from MongoDB
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private Map<String, Object> metadata;
+    private List<CaseTask> tasks;
     
     @Data
     @Builder
@@ -35,6 +37,16 @@ public class CaseInstanceDocument {
     public static class Identifier {
         private String type;
         private String value;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CaseTask {
+        private String status;
+        private String taskType;
+        private String taskName;
     }
 }
 

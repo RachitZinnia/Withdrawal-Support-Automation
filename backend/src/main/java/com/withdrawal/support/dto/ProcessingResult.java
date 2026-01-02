@@ -37,6 +37,10 @@ public class ProcessingResult {
     @Builder.Default
     private List<String> documentNumbersForManualReview = new ArrayList<>();
     
+    // Document numbers to retrigger event (Data Entry Task complete in CM)
+    @Builder.Default
+    private List<String> documentNumbersToRetriggerEvent = new ArrayList<>();
+    
     private String message;
 }
 

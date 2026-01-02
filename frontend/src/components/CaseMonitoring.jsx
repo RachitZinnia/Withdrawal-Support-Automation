@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, RefreshCw, CheckCircle, XCircle, AlertCircle, Clock, Search } from 'lucide-react';
+import { Play, RefreshCw, CheckCircle, XCircle, AlertCircle, Clock, Search, Repeat } from 'lucide-react';
 import axios from 'axios';
 import './CaseMonitoring.css';
 
@@ -149,7 +149,8 @@ const CaseMonitoring = ({ persistedState, onStateChange }) => {
           {(result.documentNumbersToCancel?.length > 0 || 
             result.documentNumbersToReturning?.length > 0 ||
             result.documentNumbersToComplete?.length > 0 ||
-            result.documentNumbersForManualReview?.length > 0) && (
+            result.documentNumbersForManualReview?.length > 0 ||
+            result.documentNumbersToRetriggerEvent?.length > 0) && (
             <div className="action-lists-section">
               <h4 className="details-title">Document Action Lists</h4>
               
@@ -215,6 +216,23 @@ const CaseMonitoring = ({ persistedState, onStateChange }) => {
                     <div className="action-list-content">
                       <ul className="document-list">
                         {result.documentNumbersForManualReview.map((docNum, index) => (
+                          <li key={index} className="document-item">{docNum}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* Documents to Retrigger Event */}
+                {result.documentNumbersToRetriggerEvent && result.documentNumbersToRetriggerEvent.length > 0 && (
+                  <div className="action-list-card">
+                    <div className="action-list-header retrigger-header">
+                      <Repeat size={20} />
+                      <h5>Documents to Retrigger Event ({result.documentNumbersToRetriggerEvent.length})</h5>
+                    </div>
+                    <div className="action-list-content">
+                      <ul className="document-list">
+                        {result.documentNumbersToRetriggerEvent.map((docNum, index) => (
                           <li key={index} className="document-item">{docNum}</li>
                         ))}
                       </ul>

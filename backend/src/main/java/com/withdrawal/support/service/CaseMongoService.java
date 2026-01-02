@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -40,7 +41,7 @@ public class CaseMongoService {
      * Analyzes a case from MongoDB and returns comprehensive status information
      * This method queries MongoDB ONCE and extracts all needed information
      */
-    public CaseAnalysisResult analyzeCaseFromMongo(String documentNumber, int businessDaysThreshold) {
+    public CaseAnalysisResult analyzeCaseFromMongo(String documentNumber, int businessDaysThreshold, String CorrelationID) {
         log.info("Analyzing MongoDB case_instance for document number: {}", documentNumber);
         
         List<CaseInstanceDocument> caseInstances = caseInstanceRepository.findByDocumentNumber(documentNumber);
@@ -59,37 +60,56 @@ public class CaseMongoService {
         }
         
         // Check if there are multiple results
-        if (caseInstances.size() > 1) {
-            log.warn("Multiple case instances ({}) found for document number: {} - flagging for manual review", 
-                    caseInstances.size(), documentNumber);
-            
-            // Get the most recently updated document for status information
-            CaseInstanceDocument latestDocument = caseInstances.stream()
-                    .max((d1, d2) -> {
-                        LocalDateTime t1 = d1.getUpdatedAt() != null ? d1.getUpdatedAt() : d1.getCreatedAt();
-                        LocalDateTime t2 = d2.getUpdatedAt() != null ? d2.getUpdatedAt() : d2.getCreatedAt();
-                        if (t1 == null) return -1;
-                        if (t2 == null) return 1;
-                        return t1.compareTo(t2);
-                    })
-                    .orElse(caseInstances.get(0));
-            
+//        if (caseInstances.size() > 1) {
+//            log.warn("Multiple case instances ({}) found for document number: {} - flagging for manual review",
+//                    caseInstances.size(), documentNumber);
+//
+//            // Get the most recently updated document for status information
+//            CaseInstanceDocument latestDocument = caseInstances.stream()
+//                    .max((d1, d2) -> {
+//                        LocalDateTime t1 = d1.getUpdatedAt() != null ? d1.getUpdatedAt() : d1.getCreatedAt();
+//                        LocalDateTime t2 = d2.getUpdatedAt() != null ? d2.getUpdatedAt() : d2.getCreatedAt();
+//                        if (t1 == null) return -1;
+//                        if (t2 == null) return 1;
+//                        return t1.compareTo(t2);
+//                    })
+//                    .orElse(caseInstances.get(0));
+//
+//            return CaseAnalysisResult.builder()
+//                    .found(true)
+//                    .caseStatus(latestDocument.getCaseStatus())
+//                    .statusField(latestDocument.getStatus())
+//                    .isInProgress(false) // Don't process automatically
+//                    .isStale(false)
+//                    .lastUpdated(latestDocument.getUpdatedAt())
+//                    .createdDate(latestDocument.getCreatedAt())
+//                    .multipleResults(true)
+//                    .resultCount(caseInstances.size())
+//                    .requiresManualReview(true)
+//                    .manualReviewReason("Multiple case instances found (" + caseInstances.size() + " results)")
+//                    .build();
+//        }
+
+        CaseInstanceDocument document = null;
+        for (CaseInstanceDocument caseInstanceDocument : caseInstances) {
+            if (caseInstanceDocument.getCorrelationId().equalsIgnoreCase(CorrelationID)) {
+                document = caseInstanceDocument;
+                break;
+            }
+        }
+        if (Objects.isNull(document)) {
+            log.info("Case not found in MongoDB for document number: {} - treating as not in progress", documentNumber);
             return CaseAnalysisResult.builder()
-                    .found(true)
-                    .caseStatus(latestDocument.getCaseStatus())
-                    .statusField(latestDocument.getStatus())
-                    .isInProgress(false) // Don't process automatically
+                    .found(false)
+                    .caseStatus(null)
+                    .isInProgress(false)
                     .isStale(false)
-                    .lastUpdated(latestDocument.getUpdatedAt())
-                    .createdDate(latestDocument.getCreatedAt())
-                    .multipleResults(true)
-                    .resultCount(caseInstances.size())
-                    .requiresManualReview(true)
-                    .manualReviewReason("Multiple case instances found (" + caseInstances.size() + " results)")
+                    .lastUpdated(null)
+                    .multipleResults(false)
+                    .resultCount(0)
                     .build();
         }
-        
-        CaseInstanceDocument document = caseInstances.get(0);
+//        CaseInstanceDocument document = caseInstances.get(0);
         String caseStatus = document.getCaseStatus();
         
         // Check caseStatus field first (preferred), fallback to status field
@@ -103,9 +123,27 @@ public class CaseMongoService {
         
         // Check if stale (only if IN_PROGRESS) - using BUSINESS DAYS
         boolean isStale = false;
+        boolean isDeTaskPresent = true;
+        boolean isDeTaskComplete = false;
         LocalDateTime lastUpdated = document.getUpdatedAt();
         
         if (isInProgress) {
+            if (document.getTasks() != null && !document.getTasks().isEmpty()) {
+                isDeTaskPresent = document.getTasks().stream()
+                        .filter(Objects::nonNull)
+                        .anyMatch(caseTask -> caseTask.getTaskName() != null && 
+                                caseTask.getTaskName().equalsIgnoreCase("Data entry"));
+
+                isDeTaskComplete = document.getTasks().stream()
+                        .filter(Objects::nonNull)
+                        .filter(caseTask -> caseTask.getTaskName() != null && 
+                                caseTask.getTaskName().equalsIgnoreCase("Data entry"))
+                        .allMatch(caseTask -> caseTask.getStatus() != null && 
+                                "COMPLETED".equalsIgnoreCase(caseTask.getStatus()));
+            } else {
+                isDeTaskPresent = false;
+            }
+
             if (lastUpdated == null) {
                 lastUpdated = document.getCreatedAt();
             }
@@ -124,6 +162,8 @@ public class CaseMongoService {
                 .caseStatus(caseStatus)
                 .statusField(document.getStatus())
                 .isInProgress(isInProgress)
+                .isDeTaskPresent(isDeTaskPresent)
+                .isDeTaskComplete(isDeTaskComplete)
                 .isStale(isStale)
                 .lastUpdated(lastUpdated)
                 .createdDate(document.getCreatedAt())
@@ -145,7 +185,9 @@ public class CaseMongoService {
         private boolean found;              // Was the case found in MongoDB?
         private String caseStatus;          // The caseStatus field value
         private String statusField;         // The status field value (fallback)
-        private boolean isInProgress;       // Is the case IN_PROGRESS?
+        private boolean isInProgress;
+        private boolean isDeTaskPresent;
+        private boolean isDeTaskComplete;// Is the case IN_PROGRESS?
         private boolean isStale;            // Is it older than threshold?
         private LocalDateTime lastUpdated;  // Last updated timestamp
         private LocalDateTime createdDate;  // Created timestamp

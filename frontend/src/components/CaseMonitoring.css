@@ -540,6 +540,12 @@
   border-bottom-color: var(--warning-color);
 }
 
+.retrigger-header {
+  background-color: #f3e8ff;
+  color: #7c3aed;
+  border-bottom-color: #7c3aed;
+}
+
 .action-list-content {
   padding: 1rem;
   max-height: 300px;

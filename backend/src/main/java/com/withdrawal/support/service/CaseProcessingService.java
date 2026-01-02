@@ -1,5 +1,7 @@
 package com.withdrawal.support.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.withdrawal.support.config.BusinessConfig;
 import com.withdrawal.support.dto.*;
 import com.withdrawal.support.model.CaseCategory;
@@ -35,11 +37,12 @@ public class CaseProcessingService {
                 .documentNumbersToReturning(new ArrayList<>())
                 .documentNumbersToComplete(new ArrayList<>())
                 .documentNumbersForManualReview(new ArrayList<>())
+                .documentNumbersToRetriggerEvent(new ArrayList<>())
                 .build();
 
         try {
             // Step 1: Get all data entry waiting cases
-//             DataEntryCase deCase = new DataEntryCase("1","d6608ee7-e090-11f0-a84d-025eefd42701",false,"1");
+//             DataEntryCase deCase = new DataEntryCase("1","629d3ab7-e28e-11f0-b537-0ed524048043",false,"1");
 //             List<DataEntryCase> waitingCases = new ArrayList<>(List.of(deCase));
             List<DataEntryCase> waitingCases = dataEntryService.getDataEntryWaitingCases();
             result.setTotalCases(waitingCases.size());
@@ -74,7 +77,7 @@ public class CaseProcessingService {
 
             result.setMessage(String.format(
                     "Processing completed: %d total, %d successful, %d failed, %d require manual review. " +
-                    "To cancel: %d, To returning: %d, To complete: %d, Manual review: %d",
+                    "To cancel: %d, To returning: %d, To complete: %d, Manual review: %d, To retrigger event: %d",
                     result.getTotalCases(),
                     result.getSuccessfulCases(),
                     result.getFailedCases(),
@@ -82,7 +85,8 @@ public class CaseProcessingService {
                     result.getDocumentNumbersToCancel().size(),
                     result.getDocumentNumbersToReturning().size(),
                     result.getDocumentNumbersToComplete().size(),
-                    result.getDocumentNumbersForManualReview().size()
+                    result.getDocumentNumbersForManualReview().size(),
+                    result.getDocumentNumbersToRetriggerEvent().size()
             ));
             
             log.info("Processing completed successfully: {}", result.getMessage());
@@ -90,6 +94,7 @@ public class CaseProcessingService {
             log.info("Document numbers to returning: {}", result.getDocumentNumbersToReturning());
             log.info("Document numbers to complete: {}", result.getDocumentNumbersToComplete());
             log.info("Document numbers for manual review: {}", result.getDocumentNumbersForManualReview());
+            log.info("Document numbers to retrigger event: {}", result.getDocumentNumbersToRetriggerEvent());
             
         } catch (Exception e) {
             log.error("Error during case processing", e);
@@ -176,29 +181,47 @@ public class CaseProcessingService {
                     // Status Pend/Pending/New with BPM Follow-Up not complete - check MongoDB
                     log.info("Case {} - Pend/Pending/New status, checking MongoDB with document number: {}", 
                             caseDetails.getCaseId(), documentNumber);
-                    
+
+                    String EVENT_MODEL = dataEntryService.getCamundaVariable(dataEntryCase.getProcessInstanceId(), "EVENT_MODEL");
+                    ObjectMapper mapper = new ObjectMapper();
+
+                    JsonNode rootNode = mapper.readTree(EVENT_MODEL);
+
+                    String correlationId = rootNode.get("correlationid").asText();
                     // Query MongoDB ONCE and get all information
                     CaseMongoService.CaseAnalysisResult mongoAnalysis = caseMongoService.analyzeCaseFromMongo(
                             documentNumber, 
-                            businessConfig.getDaysThreshold()
+                            businessConfig.getDaysThreshold(),
+                            correlationId
                     );
                     
                     // Check if multiple results were found - requires manual review
-                    if (mongoAnalysis.isMultipleResults()) {
-                        log.warn("Document {} - Multiple case instances found ({}), flagging for manual review", 
+                    if (!mongoAnalysis.isDeTaskPresent()) {
+                        log.warn("Document {} - Data Entry Task not present ({}), flagging for manual review",
                                 documentNumber, mongoAnalysis.getResultCount());
                         detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
-                        detail.setMessage(categoryDescription + " - " + mongoAnalysis.getManualReviewReason());
+                        detail.setMessage(categoryDescription + " - " + "Data Entry Task not present");
                         detail.setRequiresManualReview(true);
-                        detail.setReviewReason(mongoAnalysis.getManualReviewReason());
+                        detail.setReviewReason("Data Entry Task not present");
                         
                         // Add to manual review list
                         if (documentNumber != null && !result.getDocumentNumbersForManualReview().contains(documentNumber)) {
                             result.getDocumentNumbersForManualReview().add(documentNumber);
-                            log.info("Added document {} to manual review list (multiple results)", documentNumber);
+                            log.info("Added document {} to manual review list (Data Entry Task not present)", documentNumber);
                         }
-                    }
-                    else if (!mongoAnalysis.isInProgress()) {
+                    } else if (mongoAnalysis.isDeTaskComplete()) {
+                        log.info("Document {} - Data Entry Task status complete in CM ({}), adding to retrigger event list",
+                                documentNumber, mongoAnalysis.getResultCount());
+                        detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
+                        detail.setMessage(categoryDescription + " - " + "Data Entry Task status complete in CM - Will retrigger event");
+                        detail.setRequiresManualReview(true);
+
+                        // Add to retrigger event list
+                        if (documentNumber != null && !result.getDocumentNumbersToRetriggerEvent().contains(documentNumber)) {
+                            result.getDocumentNumbersToRetriggerEvent().add(documentNumber);
+                            log.info("Added document {} to retrigger event list (Data Entry Task status complete in CM)", documentNumber);
+                        }
+                    } else if (!mongoAnalysis.isInProgress()) {
 
                         if (mongoAnalysis.getCaseStatus().equalsIgnoreCase("COMPLETE")) {
                             // caseStatus is NOT IN_PROGRESS - add to cancellation list
@@ -283,6 +306,7 @@ public class CaseProcessingService {
 
         } catch (Exception e) {
             log.error("Error processing case: {}", dataEntryCase.getProcessInstanceId(), e);
+            documentNumber = dataEntryService.getCamundaVariable(dataEntryCase.getProcessInstanceId(), "documentNumber");
             detail.setStatus(CaseStatus.MANUAL_REVIEW_REQUIRED);
             detail.setMessage("Error: " + e.getMessage() + " Requires manual review");
             detail.setRequiresManualReview(true);
