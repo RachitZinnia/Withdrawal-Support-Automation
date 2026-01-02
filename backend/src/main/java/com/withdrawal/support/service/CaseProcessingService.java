@@ -42,7 +42,7 @@ public class CaseProcessingService {
 
         try {
             // Step 1: Get all data entry waiting cases
-//             DataEntryCase deCase = new DataEntryCase("1","629d3ab7-e28e-11f0-b537-0ed524048043",false,"1");
+//             DataEntryCase deCase = new DataEntryCase("1","264c60de-e6a4-11f0-a84d-025eefd42701",false,"1");
 //             List<DataEntryCase> waitingCases = new ArrayList<>(List.of(deCase));
             List<DataEntryCase> waitingCases = dataEntryService.getDataEntryWaitingCases();
             result.setTotalCases(waitingCases.size());
@@ -182,17 +182,13 @@ public class CaseProcessingService {
                     log.info("Case {} - Pend/Pending/New status, checking MongoDB with document number: {}", 
                             caseDetails.getCaseId(), documentNumber);
 
-                    String EVENT_MODEL = dataEntryService.getCamundaVariable(dataEntryCase.getProcessInstanceId(), "EVENT_MODEL");
-                    ObjectMapper mapper = new ObjectMapper();
+                    String dataEntryOnBaseTaskID = dataEntryService.getCamundaVariable(dataEntryCase.getProcessInstanceId(), "dataEntryOnBaseTaskID");
 
-                    JsonNode rootNode = mapper.readTree(EVENT_MODEL);
-
-                    String correlationId = rootNode.get("correlationid").asText();
                     // Query MongoDB ONCE and get all information
                     CaseMongoService.CaseAnalysisResult mongoAnalysis = caseMongoService.analyzeCaseFromMongo(
                             documentNumber, 
                             businessConfig.getDaysThreshold(),
-                            correlationId
+                            dataEntryOnBaseTaskID
                     );
                     
                     // Check if multiple results were found - requires manual review

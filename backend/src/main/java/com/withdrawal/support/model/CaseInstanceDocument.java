@@ -44,6 +44,9 @@ public class CaseInstanceDocument {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class CaseTask {
+        @Id
+        private String id;
+
         private String status;
         private String taskType;
         private String taskName;

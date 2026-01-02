@@ -41,7 +41,7 @@ public class CaseMongoService {
      * Analyzes a case from MongoDB and returns comprehensive status information
      * This method queries MongoDB ONCE and extracts all needed information
      */
-    public CaseAnalysisResult analyzeCaseFromMongo(String documentNumber, int businessDaysThreshold, String CorrelationID) {
+    public CaseAnalysisResult analyzeCaseFromMongo(String documentNumber, int businessDaysThreshold, String onbaseTaskId) {
         log.info("Analyzing MongoDB case_instance for document number: {}", documentNumber);
         
         List<CaseInstanceDocument> caseInstances = caseInstanceRepository.findByDocumentNumber(documentNumber);
@@ -92,11 +92,24 @@ public class CaseMongoService {
 
         CaseInstanceDocument document = null;
         for (CaseInstanceDocument caseInstanceDocument : caseInstances) {
-            if (caseInstanceDocument.getCorrelationId().equalsIgnoreCase(CorrelationID)) {
-                document = caseInstanceDocument;
-                break;
+            boolean isFollowUpTaskPresent = caseInstanceDocument.getTasks().stream()
+                    .filter(Objects::nonNull)
+                    .anyMatch(caseTask -> caseTask.getTaskName() != null &&
+                            caseTask.getTaskType().equalsIgnoreCase("BPM Follow-Up"));
+            if (isFollowUpTaskPresent) {
+                boolean doesTaskIdMatch = caseInstanceDocument.getTasks().stream()
+                        .filter(Objects::nonNull)
+                        .filter(caseTask -> caseTask.getTaskName() != null &&
+                                caseTask.getTaskType().equalsIgnoreCase("BPM Follow-Up"))
+                        .anyMatch(caseTask -> caseTask.getId() != null &&
+                                onbaseTaskId.equalsIgnoreCase(caseTask.getId()));
+                if (doesTaskIdMatch) {
+                    document = caseInstanceDocument;
+                    break;
+                }
             }
         }
+
         if (Objects.isNull(document)) {
             log.info("Case not found in MongoDB for document number: {} - treating as not in progress", documentNumber);
             return CaseAnalysisResult.builder()
