@@ -308,13 +308,51 @@ public class DataEntryService {
                     .toList();
 
             if (!dataEntryIds.isEmpty()) {
-                log.info("No ocr_processing found. Found {} dataentry process instance(s) for business key: {} - Returning all dataentry IDs",
+                log.info("Found {} dataentry process instance(s) for business key: {} - Returning all dataentry IDs",
                         dataEntryIds.size(), businessKey);
                 return new ProcessInstanceResult(dataEntryIds, hasActiveInstances);
             }
 
+            List<String> wdIds = processInstances.stream()
+                    .filter(instance -> {
+                        String processDefKey = getProcessDefinitionKey(instance);
+                        boolean isWd = "withdrawal".equals(processDefKey);
+                        if (isWd) {
+                            log.debug("Found withdrawal instance: {}", instance.get("id"));
+                        }
+                        return isWd;
+                    })
+                    .map(instance -> (String) instance.get("id"))
+                    .filter(id -> id != null && !id.isEmpty())
+                    .toList();
+
+            if (!wdIds.isEmpty()) {
+                log.info("Found {} withdrawal process instance(s) for business key: {} - Returning all withdrawal IDs",
+                        wdIds.size(), businessKey);
+                return new ProcessInstanceResult(wdIds, hasActiveInstances);
+            }
+
+            List<String> finalcialIds = processInstances.stream()
+                    .filter(instance -> {
+                        String processDefKey = getProcessDefinitionKey(instance);
+                        boolean financialUpdate = "financialUpdate".equals(processDefKey);
+                        if (financialUpdate) {
+                            log.debug("Found financialUpdate instance: {}", instance.get("id"));
+                        }
+                        return financialUpdate;
+                    })
+                    .map(instance -> (String) instance.get("id"))
+                    .filter(id -> id != null && !id.isEmpty())
+                    .toList();
+
+            if (!finalcialIds.isEmpty()) {
+                log.info("Found {} financialUpdate process instance(s) for business key: {} - Returning all financialUpdate IDs",
+                        finalcialIds.size(), businessKey);
+                return new ProcessInstanceResult(finalcialIds, hasActiveInstances);
+            }
+
             // Priority 3: If neither ocr_processing nor dataentry found, return empty
-            log.warn("No ocr_processing or dataentry process instances found for business key: {}", businessKey);
+            log.warn("No ocr_processing or dataentry or withdrawal or financialUpdate process instances found for business key: {}", businessKey);
             log.debug("Available process definitions: {}",
                     processInstances.stream()
                             .map(this::getProcessDefinitionKey)

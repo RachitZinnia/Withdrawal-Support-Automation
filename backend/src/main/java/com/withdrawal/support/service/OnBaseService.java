@@ -2,10 +2,15 @@ package com.withdrawal.support.service;
 
 import com.withdrawal.support.config.ApiConfig;
 import com.withdrawal.support.dto.OnBaseCaseDetails;
+import com.withdrawal.support.dto.OnBaseManageCaseRequest;
+import com.withdrawal.support.dto.OnBaseManageTaskRequest;
+import com.withdrawal.support.dto.OnBaseManageTaskResponse;
 import com.withdrawal.support.model.CaseCategory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.List;
@@ -208,6 +213,100 @@ public class OnBaseService {
         log.debug("BPM Follow-Up status - Total: {}, Open: {}, Closed: {}", total, open, closed);
         
         return new BpmFollowUpStatus(total, open, closed);
+    }
+
+    /**
+     * Manages OnBase task by moving it to a specified queue
+     * Endpoint: GET /ManageTask with JSON body
+     * 
+     * @param taskId The task ID to manage
+     * @param clientCode The LOB/client code (e.g., "USAA")
+     * @param queueName The target queue name (e.g., "tp - exit {admin}")
+     * @return OnBaseManageTaskResponse with statusCode and message
+     */
+    public OnBaseManageTaskResponse manageOnbaseTask(String taskId, String clientCode, String queueName) {
+        log.info("Managing OnBase task - TaskID: {}, LOB: {}, QueueName: {}", taskId, clientCode, queueName);
+        
+        try {
+            WebClient webClient = webClientBuilder
+                    .baseUrl(apiConfig.getOnbase().getUrl())
+                    .defaultHeader("Content-Type", "application/json")
+                    .defaultHeader("Authorization", apiConfig.getOnbase().getAuthorization())
+                    .build();
+
+            OnBaseManageTaskRequest request = OnBaseManageTaskRequest.builder()
+                    .lob(clientCode)
+                    .taskID(taskId)
+                    .queueName(queueName)
+                    .build();
+
+            OnBaseManageTaskResponse response = webClient
+                    .method(HttpMethod.POST)
+                    .uri("/ManageTask")
+                    .body(BodyInserters.fromValue(request))
+                    .retrieve()
+                    .bodyToMono(OnBaseManageTaskResponse.class)
+                    .block();
+
+            if (response != null) {
+                log.info("ManageTask response - StatusCode: {}, Message: {}", 
+                        response.getStatusCode(), response.getMessage());
+            }
+
+            return response;
+
+        } catch (Exception e) {
+            log.error("Failed to manage OnBase task - TaskID: {}, LOB: {}, QueueName: {}", 
+                    taskId, clientCode, queueName, e);
+            throw new RuntimeException("Failed to manage OnBase task: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Manages OnBase case by moving it to a specified queue
+     * Endpoint: POST /ManageCase with JSON body
+     * 
+     * @param caseId The case ID to manage
+     * @param clientCode The LOB/client code (e.g., "USAA")
+     * @param queueName The target queue name (e.g., "CP - BPM Complete")
+     * @return OnBaseManageTaskResponse with statusCode and message
+     */
+    public OnBaseManageTaskResponse manageOnbaseCase(String caseId, String clientCode, String queueName) {
+        log.info("Managing OnBase case - CaseID: {}, LOB: {}, QueueName: {}", caseId, clientCode, queueName);
+        
+        try {
+            WebClient webClient = webClientBuilder
+                    .baseUrl(apiConfig.getOnbase().getUrl())
+                    .defaultHeader("Content-Type", "application/json")
+                    .defaultHeader("Authorization", apiConfig.getOnbase().getAuthorization())
+                    .build();
+
+            OnBaseManageCaseRequest request = OnBaseManageCaseRequest.builder()
+                    .lob(clientCode)
+                    .caseID(caseId)
+                    .queueName(queueName)
+                    .build();
+
+            OnBaseManageTaskResponse response = webClient
+                    .post()
+                    .uri("/ManageCase")
+                    .body(BodyInserters.fromValue(request))
+                    .retrieve()
+                    .bodyToMono(OnBaseManageTaskResponse.class)
+                    .block();
+
+            if (response != null) {
+                log.info("ManageCase response - StatusCode: {}, Message: {}", 
+                        response.getStatusCode(), response.getMessage());
+            }
+
+            return response;
+
+        } catch (Exception e) {
+            log.error("Failed to manage OnBase case - CaseID: {}, LOB: {}, QueueName: {}", 
+                    caseId, clientCode, queueName, e);
+            throw new RuntimeException("Failed to manage OnBase case: " + e.getMessage());
+        }
     }
 }
 

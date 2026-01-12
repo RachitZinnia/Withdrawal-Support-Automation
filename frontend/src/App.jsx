@@ -5,6 +5,7 @@ import DailyReportUpload from './components/DailyReportUpload'
 import MRTProcessing from './components/MRTProcessing'
 import LetterProcessing from './components/LetterProcessing'
 import EmailProcessing from './components/EmailProcessing'
+import MoveCaseStatus from './components/MoveCaseStatus'
 import Header from './components/Header'
 
 function App() {
@@ -42,6 +43,14 @@ function App() {
     loading: false
   });
 
+  const [moveCaseState, setMoveCaseState] = useState({
+    result: null,
+    error: null,
+    loading: false,
+    selectedAction: null,
+    documentNumbers: ''
+  });
+
   return (
     <div className="app">
       <Header />
@@ -76,6 +85,12 @@ function App() {
             onClick={() => setActiveTab('email')}
           >
             Email Resolution
+          </button>
+          <button 
+            className={`tab ${activeTab === 'movecase' ? 'active' : ''}`}
+            onClick={() => setActiveTab('movecase')}
+          >
+            Move Case Status
           </button>
         </div>
       </div>
@@ -136,6 +151,18 @@ function App() {
                 setEmailState(prev => updater(prev));
               } else {
                 setEmailState(updater);
+              }
+            }}
+          />
+        )}
+        {activeTab === 'movecase' && (
+          <MoveCaseStatus 
+            persistedState={moveCaseState}
+            onStateChange={(updater) => {
+              if (typeof updater === 'function') {
+                setMoveCaseState(prev => updater(prev));
+              } else {
+                setMoveCaseState(updater);
               }
             }}
           />
