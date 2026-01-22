@@ -145,7 +145,7 @@ public class MRTProcessingService {
 
             for (DataEntryCase mrtWaitingCase : mrtWaitingCaseList) {
                 try {
-                    CaseDetails caseDetails = dataEntryService.getCaseDetails(mrtWaitingCase.getProcessInstanceId());
+                    CaseDetails caseDetails = dataEntryService.getCaseDetailsForWithdrawals(mrtWaitingCase.getProcessInstanceId());
                     OnBaseCaseDetails onBaseDetails = onBaseService.getOnBaseCaseDetails(
                             caseDetails.getClientCode(),
                             caseDetails.getCaseId()

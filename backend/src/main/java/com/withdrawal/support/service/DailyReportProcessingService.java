@@ -54,7 +54,7 @@ public class DailyReportProcessingService {
             // Step 3: Extract business keys
             List<String> businessKeys = csvProcessingService.extractBusinessKeys(notMatchingRows);
 //            List<String> businessKeys = new ArrayList<>();
-//            businessKeys.add("20251217-EM-106066");
+//            businessKeys.add("20251211-X-839269");
 //            List<String> businessKeys = List.of("20251208-W-608306");
             result.setBusinessKeysExtracted(businessKeys);
             log.info("Extracted {} unique business keys", businessKeys.size());
@@ -138,7 +138,7 @@ public class DailyReportProcessingService {
             for (String processInstanceId : processInstanceIds) {
                 try {
                     CaseProcessingDetail detail = processProcessInstanceFromBusinessKey(
-                            processInstanceId, result, hasActiveInstances);
+                            processInstanceId, result, hasActiveInstances, processResult.isRenewals());
                     caseDetails.add(detail);
                 } catch (Exception e) {
                     log.error("Error processing process instance {}: {}", processInstanceId, e.getMessage());
@@ -173,7 +173,7 @@ public class DailyReportProcessingService {
      */
     private CaseProcessingDetail processProcessInstanceFromBusinessKey(String processInstanceId, 
                                                                        DailyReportProcessingResult result, 
-                                                                       boolean hasActiveInstances) {
+                                                                       boolean hasActiveInstances, boolean isRenewals) {
         log.info("Processing process instance from business key: {} (hasActiveInstances: {})", 
                 processInstanceId, hasActiveInstances);
         
@@ -183,8 +183,14 @@ public class DailyReportProcessingService {
                 .build();
 
         try {
+            CaseDetails caseDetails = new CaseDetails();
+            if (isRenewals) {
+                caseDetails = dataEntryService.getCaseDetailsForRenewals(processInstanceId);
+            } else {
+                caseDetails = dataEntryService.getCaseDetailsForWithdrawals(processInstanceId);
+            }
             // Step 1: Get case details from Camunda (clientCode and onbaseCaseId)
-            CaseDetails caseDetails = dataEntryService.getCaseDetails(processInstanceId);
+
             detail.setCaseId(caseDetails.getCaseId());
             detail.setClientCode(caseDetails.getClientCode());
 
@@ -208,9 +214,15 @@ public class DailyReportProcessingService {
             CaseCategory category = onBaseService.categorizeCaseByStatus(onBaseDetails);
             
             // If there are active instances, override category to UNKNOWN
-            if (hasActiveInstances) {
+            if (hasActiveInstances && !isRenewals) {
                 log.info("Active instances found - setting category to UNKNOWN for manual review");
                 category = CaseCategory.WAITING_CASE;
+            }
+
+            if (isRenewals) {
+                if(!category.equals(CaseCategory.DV_POST_OPEN_DV_COMPLETE)) {
+                    category = CaseCategory.WAITING_CASE;
+                }
             }
             
             detail.setCategory(category);

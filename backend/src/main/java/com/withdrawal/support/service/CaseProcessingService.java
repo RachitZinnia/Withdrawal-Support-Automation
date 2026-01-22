@@ -117,7 +117,7 @@ public class CaseProcessingService {
         String documentNumber = "";
         try {
             // Step 2: Get case details from Camunda (clientCode and onbaseCaseId)
-            CaseDetails caseDetails = dataEntryService.getCaseDetails(dataEntryCase.getProcessInstanceId());
+            CaseDetails caseDetails = dataEntryService.getCaseDetailsForWithdrawals(dataEntryCase.getProcessInstanceId());
             detail.setCaseId(caseDetails.getCaseId());
             detail.setClientCode(caseDetails.getClientCode());
 

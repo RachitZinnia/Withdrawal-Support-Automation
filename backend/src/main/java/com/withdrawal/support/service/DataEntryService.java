@@ -1,5 +1,6 @@
 package com.withdrawal.support.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.withdrawal.support.config.ApiConfig;
 import com.withdrawal.support.dto.*;
 import com.withdrawal.support.model.ProcessResult;
@@ -33,6 +34,7 @@ public class DataEntryService {
     public static class ProcessInstanceResult {
         private List<String> processInstanceIds;
         private boolean hasActiveInstances;
+        private boolean isRenewals;
     }
 
     private final ApiConfig apiConfig;
@@ -113,7 +115,7 @@ public class DataEntryService {
      * Fetches case details from Camunda by getting process variables
      * Gets clientCode and onbaseCaseId from the process instance
      */
-    public CaseDetails getCaseDetails(String processInstanceId) {
+    public CaseDetails getCaseDetailsForWithdrawals(String processInstanceId) {
         log.info("Fetching case details for process instance: {}", processInstanceId);
 
         try {
@@ -148,6 +150,55 @@ public class DataEntryService {
         }
     }
 
+    public CaseDetails getCaseDetailsForRenewals(String processInstanceId) {
+        log.info("Fetching case details for renewals process instance: {}", processInstanceId);
+
+        try {
+            // Get client variable (clientCode for renewals)
+            String clientCode = getCamundaVariable(processInstanceId, "client");
+            log.info("Retrieved client: {}", clientCode);
+
+            // Get caseCreatedRequest and extract caseId
+            String caseCreatedRequest = getCamundaVariable(processInstanceId, "caseCreatedRequest");
+            log.info("Retrieved caseCreatedRequest: {}", caseCreatedRequest);
+            
+            String onbaseCaseId = null;
+            if (caseCreatedRequest != null && !caseCreatedRequest.isEmpty()) {
+                try {
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(caseCreatedRequest);
+                    if (jsonNode.has("caseId")) {
+                        onbaseCaseId = jsonNode.get("caseId").asText();
+                        log.info("Extracted caseId from caseCreatedRequest: {}", onbaseCaseId);
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to parse caseCreatedRequest JSON: {}", e.getMessage());
+                }
+            }
+
+            // Build client variables map
+            Map<String, Object> clientVariables = new HashMap<>();
+            clientVariables.put("clientCode", clientCode);
+            clientVariables.put("processInstanceId", processInstanceId);
+
+            // Build and return case details
+            CaseDetails details = CaseDetails.builder()
+                    .caseId(onbaseCaseId)
+                    .caseReference(processInstanceId)
+                    .clientCode(clientCode)
+                    .clientVariables(clientVariables)
+                    .build();
+
+            log.info("Successfully retrieved case details for renewals - OnBase Case ID: {}, Client Code: {}",
+                    onbaseCaseId, clientCode);
+            return details;
+
+        } catch (Exception e) {
+            log.error("Failed to fetch case details for renewals process instance: {}", processInstanceId, e);
+            throw new RuntimeException("Failed to fetch case details for renewals: " + e.getMessage());
+        }
+    }
+
     /**
      * Gets a specific variable from a Camunda process instance using history API
      * Endpoint: /history/variable-instance?processInstanceId={processInstanceId}&variableName={variableName}
@@ -165,6 +216,7 @@ public class DataEntryService {
                             .path("/history/variable-instance")
                             .queryParam("processInstanceId", processInstanceId)
                             .queryParam("variableName", variableName)
+                            .queryParam("deserializeValues", false)
                             .build())
                     .retrieve()
                     .bodyToMono(new ParameterizedTypeReference<List<CamundaVariable>>() {})
@@ -241,7 +293,7 @@ public class DataEntryService {
 
             if (processInstances == null || processInstances.isEmpty()) {
                 log.warn("No process instances found for business key: {}", businessKey);
-                return new ProcessInstanceResult(List.of(), false);
+                return new ProcessInstanceResult(List.of(), false, false);
             }
 
             log.info("Found {} total process instances for business key: {}",
@@ -263,7 +315,7 @@ public class DataEntryService {
             }
             if (!definitonKey.isEmpty()) {
                 List<String> result = processInstances.stream().map(instance -> (String)instance.get("id")).collect(Collectors.toList());
-                return new ProcessInstanceResult(result, hasActiveInstances);
+                return new ProcessInstanceResult(result, hasActiveInstances, false);
             }
             // Debug: Log first instance structure to verify field names
             if (!processInstances.isEmpty()) {
@@ -290,7 +342,7 @@ public class DataEntryService {
                 log.info("Found {} ocr_processing process instance(s) for business key: {} - Returning ocr_processing ID only",
                         ocrProcessingIds.size(), businessKey);
                 // Return only the first ocr_processing instance ID
-                return new ProcessInstanceResult(List.of(ocrProcessingIds.get(0)), hasActiveInstances);
+                return new ProcessInstanceResult(List.of(ocrProcessingIds.get(0)), hasActiveInstances, false);
             }
 
             // Priority 2: If no ocr_processing found, look for dataentry process instances
@@ -310,7 +362,7 @@ public class DataEntryService {
             if (!dataEntryIds.isEmpty()) {
                 log.info("Found {} dataentry process instance(s) for business key: {} - Returning all dataentry IDs",
                         dataEntryIds.size(), businessKey);
-                return new ProcessInstanceResult(dataEntryIds, hasActiveInstances);
+                return new ProcessInstanceResult(dataEntryIds, hasActiveInstances, false);
             }
 
             List<String> wdIds = processInstances.stream()
@@ -329,7 +381,7 @@ public class DataEntryService {
             if (!wdIds.isEmpty()) {
                 log.info("Found {} withdrawal process instance(s) for business key: {} - Returning all withdrawal IDs",
                         wdIds.size(), businessKey);
-                return new ProcessInstanceResult(wdIds, hasActiveInstances);
+                return new ProcessInstanceResult(wdIds, hasActiveInstances, false);
             }
 
             List<String> finalcialIds = processInstances.stream()
@@ -348,7 +400,26 @@ public class DataEntryService {
             if (!finalcialIds.isEmpty()) {
                 log.info("Found {} financialUpdate process instance(s) for business key: {} - Returning all financialUpdate IDs",
                         finalcialIds.size(), businessKey);
-                return new ProcessInstanceResult(finalcialIds, hasActiveInstances);
+                return new ProcessInstanceResult(finalcialIds, hasActiveInstances, false);
+            }
+
+            List<String> renewalIds = processInstances.stream()
+                    .filter(instance -> {
+                        String processDefKey = getProcessDefinitionKey(instance);
+                        boolean RenewalPreTransaction = "RenewalPreTransaction".equals(processDefKey);
+                        if (RenewalPreTransaction) {
+                            log.debug("Found RenewalPreTransaction instance: {}", instance.get("id"));
+                        }
+                        return RenewalPreTransaction;
+                    })
+                    .map(instance -> (String) instance.get("id"))
+                    .filter(id -> id != null && !id.isEmpty())
+                    .toList();
+
+            if (!renewalIds.isEmpty()) {
+                log.info("Found {} RenewalPreTransaction process instance(s) for business key: {} - Returning all RenewalPreTransaction IDs",
+                        renewalIds.size(), businessKey);
+                return new ProcessInstanceResult(renewalIds, hasActiveInstances, true);
             }
 
             // Priority 3: If neither ocr_processing nor dataentry found, return empty
@@ -359,11 +430,11 @@ public class DataEntryService {
                             .distinct()
                             .toList());
             
-            return new ProcessInstanceResult(List.of(), hasActiveInstances);
+            return new ProcessInstanceResult(List.of(), hasActiveInstances, false);
 
         } catch (Exception e) {
             log.error("Failed to fetch process instances for business key: {}", businessKey, e);
-            return new ProcessInstanceResult(List.of(), false);
+            return new ProcessInstanceResult(List.of(), false, false);
         }
     }
 

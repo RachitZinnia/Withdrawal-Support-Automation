@@ -8,6 +8,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/case/status")
 @RequiredArgsConstructor
@@ -124,6 +128,55 @@ public class CaseStatusController {
                     .failedCount(0)
                     .createOscCount(0)
                     .build());
+        }
+    }
+
+    /**
+     * Extract document numbers that have a "Data entry" task
+     */
+    @PostMapping("/filter/dataentry")
+    public ResponseEntity<Map<String, Object>> getDocumentsWithDataEntryTask(@RequestBody CaseStatusRequest request) {
+        log.info("Received request to filter documents with Data entry task, count: {}", 
+                request.getDocumentNumbers() != null ? request.getDocumentNumbers().size() : 0);
+        
+        try {
+            if (request.getDocumentNumbers() == null || request.getDocumentNumbers().isEmpty()) {
+                Map<String, Object> errorResponse = new HashMap<>();
+                errorResponse.put("message", "No document numbers provided");
+                errorResponse.put("totalSubmitted", 0);
+                errorResponse.put("documentsWithDataEntry", List.of());
+                errorResponse.put("documentsWithoutDataEntry", List.of());
+                return ResponseEntity.badRequest().body(errorResponse);
+            }
+            
+            List<String> documentsWithDataEntry = caseStatusService
+                    .getDocumentsWithDataEntryTask(request.getDocumentNumbers());
+            
+            List<String> documentsWithoutDataEntry = request.getDocumentNumbers().stream()
+                    .filter(doc -> !documentsWithDataEntry.contains(doc))
+                    .toList();
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Filter completed successfully");
+            response.put("totalSubmitted", request.getDocumentNumbers().size());
+            response.put("documentsWithDataEntry", documentsWithDataEntry);
+            response.put("documentsWithDataEntryCount", documentsWithDataEntry.size());
+            response.put("documentsWithoutDataEntry", documentsWithoutDataEntry);
+            response.put("documentsWithoutDataEntryCount", documentsWithoutDataEntry.size());
+            
+            log.info("Filter completed - With Data Entry: {}, Without Data Entry: {}", 
+                    documentsWithDataEntry.size(), documentsWithoutDataEntry.size());
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("Error filtering documents with Data entry task: {}", e.getMessage(), e);
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("message", "Error processing request: " + e.getMessage());
+            errorResponse.put("totalSubmitted", request.getDocumentNumbers() != null ? request.getDocumentNumbers().size() : 0);
+            errorResponse.put("documentsWithDataEntry", List.of());
+            errorResponse.put("documentsWithoutDataEntry", List.of());
+            return ResponseEntity.internalServerError().body(errorResponse);
         }
     }
 }

@@ -129,8 +129,8 @@
 }
 
 .badge-returning {
-  background-color: #e0e7ff;
-  color: #4f46e5;
+  background-color: #ffedd5;
+  color: #ea580c;
 }
 
 .badge-complete {
@@ -210,8 +210,8 @@
 }
 
 .category-dv_post_open_dv_complete {
-  background-color: #e0e7ff;
-  color: #4f46e5;
+  background-color: #ffedd5;
+  color: #ea580c;
 }
 
 .category-check_mongodb {

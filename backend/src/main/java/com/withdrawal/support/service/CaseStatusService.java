@@ -2,6 +2,8 @@ package com.withdrawal.support.service;
 
 import com.withdrawal.support.dto.CaseStatusResponse;
 import com.withdrawal.support.dto.OnBaseCaseDetails;
+import com.withdrawal.support.model.CaseInstanceDocument;
+import com.withdrawal.support.repository.CaseInstanceRepository;
 import lombok.RequiredArgsConstructor;
 
 import org.slf4j.Logger;
@@ -11,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -23,6 +26,9 @@ public class CaseStatusService {
 
     @Autowired
     DataEntryService dataEntryService;
+
+    @Autowired
+    CaseInstanceRepository caseInstanceRepository;
 
     /**
      * Close BPM Follow-Up tasks for the given document numbers
@@ -263,5 +269,58 @@ public class CaseStatusService {
                 .createOscDocuments(createOscDocuments)
                 .message(message)
                 .build();
+    }
+
+    /**
+     * Extract document numbers that have a "Data entry" task from the given list
+     * 
+     * @param documentNumbers List of document numbers to check
+     * @return List of document numbers that have a "Data entry" task
+     */
+    public List<String> getDocumentsWithDataEntryTask(List<String> documentNumbers) {
+        log.info("Extracting documents with 'Data entry' task from {} document numbers", documentNumbers.size());
+        
+        try {
+            // Query MongoDB for documents with Data entry task
+            List<CaseInstanceDocument> caseInstances = caseInstanceRepository
+                    .findByDocumentNumbersAndTaskName(documentNumbers, "Data entry");
+            
+            // Extract document numbers from identifiers
+            List<String> documentsWithDataEntry = caseInstances.stream()
+                    .flatMap(caseInstance -> caseInstance.getIdentifiers().stream())
+                    .filter(identifier -> documentNumbers.contains(identifier.getValue()))
+                    .map(CaseInstanceDocument.Identifier::getValue)
+                    .distinct()
+                    .collect(Collectors.toList());
+            
+            log.info("Found {} documents with 'Data entry' task out of {} submitted", 
+                    documentsWithDataEntry.size(), documentNumbers.size());
+            
+            return documentsWithDataEntry;
+            
+        } catch (Exception e) {
+            log.error("Error extracting documents with Data entry task: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to extract documents with Data entry task: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Extract document numbers that do NOT have a "Data entry" task from the given list
+     * 
+     * @param documentNumbers List of document numbers to check
+     * @return List of document numbers that do NOT have a "Data entry" task
+     */
+    public List<String> getDocumentsWithoutDataEntryTask(List<String> documentNumbers) {
+        log.info("Extracting documents without 'Data entry' task from {} document numbers", documentNumbers.size());
+        
+        List<String> documentsWithDataEntry = getDocumentsWithDataEntryTask(documentNumbers);
+        
+        List<String> documentsWithoutDataEntry = documentNumbers.stream()
+                .filter(doc -> !documentsWithDataEntry.contains(doc))
+                .collect(Collectors.toList());
+        
+        log.info("Found {} documents without 'Data entry' task", documentsWithoutDataEntry.size());
+        
+        return documentsWithoutDataEntry;
     }
 }

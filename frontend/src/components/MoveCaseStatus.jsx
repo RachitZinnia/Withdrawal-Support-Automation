@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, RefreshCw, CheckCircle, XCircle, AlertCircle, ArrowRight, RotateCcw, CheckSquare, FilePlus, FileText } from 'lucide-react';
+import { Play, RefreshCw, CheckCircle, XCircle, AlertCircle, ArrowRight, RotateCcw, CheckSquare, FilePlus, FileText, FileCheck } from 'lucide-react';
 import axios from 'axios';
 import './MoveCaseStatus.css';
 
